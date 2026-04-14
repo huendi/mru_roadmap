@@ -47,7 +47,10 @@ export async function POST(request: NextRequest) {
     const authInstance = admin.auth(app)
 
     // 1. Get Firestore doc to find Cloudinary image URL BEFORE deleting
-    const userDoc = await db.collection('users').doc(uid).get()
+    let userDoc = await db.collection('users').doc(uid).get()
+    if (!userDoc.exists) {
+      userDoc = await db.collection('deletedUsers').doc(uid).get()
+    }
     const userData = userDoc.data()
 
     // 2. Delete image from Cloudinary if it exists
@@ -67,6 +70,7 @@ export async function POST(request: NextRequest) {
     // 3. Delete Firestore document
     await db.collection('users').doc(uid).delete()
     console.log('Firestore document deleted:', uid)
+    await db.collection('deletedUsers').doc(uid).delete()
 
     // 4. Delete Firebase Auth user
     await authInstance.deleteUser(uid)
