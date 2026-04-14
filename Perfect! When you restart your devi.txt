@@ -1,0 +1,45 @@
+Perfect! When you restart your device, here's what you'll need to do to continue:
+
+🔄 After Restart
+Open terminal in the project directory:
+bash
+cd "d:\WENDY\MRU Roadmap"
+Install dependencies (if not already done):
+bash
+npm install
+Set up Firebase (if you haven't yet):
+Create Firebase project at https://console.firebase.google.com
+Update .env.local with your Firebase config
+Run the application:
+bash
+npm run dev
+📋 Current Status
+✅ Completed:
+
+Next.js project structure
+Firebase configuration files
+Authentication pages
+Dashboard with level system
+TypeScript types
+⏳ Next Steps:
+
+Install dependencies
+Configure Firebase
+Test the application
+Add Level 1-3 functionality
+The project structure is ready to go. When you return, you'll be able to pick up right where we left off!
+
+
+
+ok, lets go to update your profile before going to dashboard, after registration before going to dashboard they need to update their profile, gender, educational attainment and 
+
+See you soon! 👋
+
+
+
+
+Tax Identification Number (TIN)
+Birth Certificate (PSA Copy)
+2×2 ID Pictures
+NBI or Police Clearance
+SSS

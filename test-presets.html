@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test All Upload Presets</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-result { margin: 10px 0; padding: 10px; border-radius: 5px; }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .loading { background-color: #fff3cd; color: #856404; }
+    </style>
+</head>
+<body>
+    <h1>Cloudinary Upload Preset Test</h1>
+    <p>Testing different upload preset names to find the correct one...</p>
+    
+    <input type="file" id="fileInput" accept="image/*">
+    <button onclick="testAllPresets()">Test All Presets</button>
+    
+    <div id="results"></div>
+
+    <script>
+        const presets = [
+            'moutnrushmoreunit',
+            'Unsigned', 
+            'unsigned',
+            'mru-roadmap-uploads',
+            'default',
+            'samples'
+        ];
+
+        async function testPreset(presetName) {
+            const file = document.getElementById('fileInput').files[0];
+            if (!file) {
+                alert('Please select a file first');
+                return;
+            }
+
+            const resultDiv = document.getElementById('results');
+            const testDiv = document.createElement('div');
+            testDiv.className = 'test-result loading';
+            testDiv.innerHTML = `<strong>Testing: ${presetName}</strong> - Loading...`;
+            resultDiv.appendChild(testDiv);
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('upload_preset', presetName);
+            formData.append('folder', 'test');
+            formData.append('api_key', '697576995163947'); // Your actual API key
+
+            try {
+                const response = await fetch('https://api.cloudinary.com/v1_1/divtweyoo/image/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const responseText = await response.text();
+                
+                if (response.ok) {
+                    testDiv.className = 'test-result success';
+                    testDiv.innerHTML = `<strong>✅ ${presetName}</strong> - SUCCESS!`;
+                } else {
+                    testDiv.className = 'test-result error';
+                    testDiv.innerHTML = `<strong>❌ ${presetName}</strong> - FAILED<br><small>${responseText}</small>`;
+                }
+            } catch (error) {
+                testDiv.className = 'test-result error';
+                testDiv.innerHTML = `<strong>❌ ${presetName}</strong> - ERROR<br><small>${error}</small>`;
+            }
+        }
+
+        async function testAllPresets() {
+            const file = document.getElementById('fileInput').files[0];
+            if (!file) {
+                alert('Please select a file first');
+                return;
+            }
+
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '';
+
+            for (const preset of presets) {
+                await testPreset(preset);
+                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds between tests
+            }
+        }
+    </script>
+</body>
+</html>

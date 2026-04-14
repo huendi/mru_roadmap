@@ -1,0 +1,68 @@
+Project Name: MRU Roadmap (Financial Advisor Training Platform)
+Platform: Frontend – Vercel / Backend & Database – Firebase (Firestore + Authentication)
+Goal: Publicly accessible website where users can register, track their roadmap to become a financial advisor, take mock exams, and progress through levels.
+
+⸻
+
+1️⃣ Features Required
+	1.	Public link: Accessible via browser (no login needed to see landing page).
+	2.	User registration/login: Handled via Firebase Authentication.
+	3.	Dashboard: After login, users see:
+	•	Current level
+	•	Checklist of requirements
+	•	Locked and unlocked levels
+	4.	Level system: Users progress through 7 levels. Unlock logic depends on completion of prior tasks.
+	5.	Mock exam Link.
+	6.	Progress tracking: Save user data in Firestore:
+	•	Name
+	•	Email
+	•	Current level
+	•	Requirements completed
+	•	Uploading docs
+
+
+2️⃣ Levels Structure
+
+Level 1 – Registration & Orientation
+	•	User registers with email/password
+	•	Complete basic profile
+	•	Read intro about Financial Advisor journey
+
+Level 2 – Requirements Submission
+	•	Upload / mark checklist of requirements (IDs, forms, etc.)
+	•	at least 3 requirements uploaded
+
+Level 3 – Mock Exam (Level 1)
+	•	LInk Mock Exam / upload result input score.
+
+Level 4 – Blank / To be defined
+	•	Reserved for future content
+
+Level 5 – Blank / To be defined
+	•	Reserved for future content
+
+Level 6 – Blank / To be defined
+	•	Reserved for future content
+
+Level 7 – Blank / To be defined
+	•	Reserved for future content
+
+
+
+1. Insurance Concept Fundamentals Review - January 29, 2026: 
+https://share.vidyard.com/watch/zd7cUH72Xw7ceWEiDhvMfT
+
+2. Traditional Concepts Review - January 29, 2026
+https://share.vidyard.com/watch/NosJwJuMVRDWzunbCuUdgt
+
+3. VUL Concepts Review - January 30, 2026
+https://share.vidyard.com/watch/gvANM73DMS7xwGmDuXrBLi
+
+Password for all videos: sl_brightbox.
+
+
+
+jantimothy.b.sese@sunlife.com.ph
+Jan Timothy
+Sese
+117617
