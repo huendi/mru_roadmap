@@ -62,7 +62,7 @@ export default function Navbar() {
     return 'MRU Roadmap'
   }
 
-  const fullName = user.displayName || user.name || user.email?.split('@')[0] || 'User'
+  const fullName = user.name || user.displayName || user.email?.split('@')[0] || 'User'
   const avatarLetter = fullName.charAt(0).toUpperCase()
 
   return (

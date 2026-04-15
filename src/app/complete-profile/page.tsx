@@ -125,13 +125,15 @@ export default function CompleteProfilePage() {
 
     try {
       if (user) {
+        const updatedName = [profileData.firstName, profileData.middleName, profileData.lastName]
+          .filter(Boolean)
+          .join(' ')
+
         await updateUserProfile(user.uid, {
           firstName: profileData.firstName,
           middleName: profileData.middleName,
           lastName: profileData.lastName,
-          name: [profileData.firstName, profileData.middleName, profileData.lastName]
-            .filter(Boolean)
-            .join(' '),
+          name: updatedName,
           contact: profileData.contact,
           birthday: profileData.birthday,
           birthplace: profileData.birthplace,
@@ -146,6 +148,15 @@ export default function CompleteProfilePage() {
           currentJob: profileData.currentJob,
           profileCompleted: true,
         })
+
+          setUser(prev => prev ? {
+          ...prev,
+          name: updatedName,
+          firstName: profileData.firstName,
+          middleName: profileData.middleName,
+          lastName: profileData.lastName,
+          profileCompleted: true
+        } : prev)
 
         setSuccess('Profile completed successfully! Redirecting to dashboard...')
         setTimeout(() => router.push('/dashboard'), 2000)

@@ -71,6 +71,7 @@ export async function POST(request: NextRequest) {
     await db.collection('users').doc(uid).delete()
     console.log('Firestore document deleted:', uid)
     await db.collection('deletedUsers').doc(uid).delete()
+    console.log('Deleted users document deleted:', uid)
 
     // 4. Delete Firebase Auth user
     await authInstance.deleteUser(uid)

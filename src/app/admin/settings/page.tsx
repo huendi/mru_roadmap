@@ -129,7 +129,6 @@ function Level2Panel() {
 
   if (!settings) return null
 
-  // Video card component used on right column
   const VideoCard = ({ v, i }: { v: Level2Settings['videos'][0]; i: number }) => (
     <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 space-y-2">
       <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Video {i + 1}</p>
@@ -167,10 +166,10 @@ function Level2Panel() {
   )
 
   return (
-    <div className="flex gap-6 items-start">
+    <div className="flex flex-col md:flex-row gap-6 items-start">
 
       {/* ── LEFT COLUMN ── */}
-      <div className="flex-1 min-w-0 space-y-6">
+      <div className="flex-1 min-w-0 w-full space-y-6">
 
         {/* Video password */}
         <FieldRow label="🔑 Video Password">
@@ -211,12 +210,10 @@ function Level2Panel() {
       </div>
 
       {/* ── RIGHT COLUMN ── */}
-      <div className="flex-1 min-w-0 space-y-6">
+      <div className="flex-1 min-w-0 w-full space-y-6">
 
         {/* Video 2 */}
-        <FieldRow label="​">
-          <VideoCard v={settings.videos[1]} i={1} />
-        </FieldRow>
+        <VideoCard v={settings.videos[1]} i={1} />
 
         {/* Video 3 */}
         <VideoCard v={settings.videos[2]} i={2} />
@@ -243,7 +240,6 @@ function Level3Panel() {
   const [loadingHistory, setLoadingHistory] = useState(true)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // ✅ FIX 1: fetchHistory declared BEFORE useEffect so it's in scope
   const fetchHistory = async () => {
     setLoadingHistory(true)
     try {
@@ -289,10 +285,10 @@ function Level3Panel() {
   }
 
   return (
-    <div className="flex gap-6 items-start">
+    <div className="flex flex-col md:flex-row gap-6 items-start">
 
       {/* ── LEFT COLUMN ── */}
-      <div className="flex-1 min-w-0 space-y-6">
+      <div className="flex-1 min-w-0 w-full space-y-6">
 
         <FieldRow label="📁 Exam History">
           <div className="border border-blue-200 rounded-xl overflow-hidden">
@@ -362,7 +358,6 @@ function Level3Panel() {
           </div>
         </FieldRow>
 
-        {/* ✅ FIX 2: &nbsp; replaced with JSX string */}
         <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 space-y-1">
           <p className="text-xs font-bold text-yellow-800">📝 File Format (.docx)</p>
           <p className="text-xs text-yellow-700 font-mono">1. Question text</p>
@@ -384,7 +379,7 @@ function Level3Panel() {
       </div>
 
       {/* ── RIGHT COLUMN ── */}
-      <div className="flex-1 min-w-0 space-y-6">
+      <div className="flex-1 min-w-0 w-full space-y-6">
 
         <FieldRow label="📤 Upload New Questions">
           <div

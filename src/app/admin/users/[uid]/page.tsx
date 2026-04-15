@@ -32,7 +32,6 @@ const getFilenameFromUrl = (url: string): string => {
     const pathname = new URL(url).pathname
     const decoded = decodeURIComponent(pathname)
     let filename = decoded.split('/').pop() || 'Document'
-    // Fix Cloudinary double-extension: e.g. file.pdf.pdf → file.pdf
     filename = filename.replace(/(\.[a-zA-Z0-9]+)\1$/i, '$1')
     return filename
   } catch {
@@ -95,7 +94,6 @@ export default function UserDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [viewDoc, setViewDoc] = useState<UserDocument | null>(null)
 
-  // Load user via getUserByUid
   useEffect(() => {
     if (!uid) return
     getUserByUid(uid)
@@ -104,19 +102,17 @@ export default function UserDetailPage() {
       .finally(() => setLoading(false))
   }, [uid])
 
-  // Load exams + documents
   useEffect(() => {
     if (!uid) return
     const load = async () => {
       try {
         const [examsRes, docsRes] = await Promise.all([
-          fetch(`/api/user/level3-exams?uid=${uid}`),  // ← CHANGED
+          fetch(`/api/user/level3-exams?uid=${uid}`),
           fetch(`/api/user/documents?uid=${uid}`),
         ])
         const examsData = examsRes.ok ? await examsRes.json() : { exams: [] }
         const docsData  = docsRes.ok  ? await docsRes.json()  : []
 
-        // Flatten grouped → flat ExamAttempt[]
         const flatAttempts: ExamAttempt[] = (examsData.exams ?? []).flatMap(
           (record: { examId: number; attempts: ExamAttempt[] }) =>
             record.attempts.map(attempt => ({
@@ -167,7 +163,7 @@ export default function UserDetailPage() {
   // ── Loading ──────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full py-32">
+      <div className="flex items-center justify-center min-h-[60vh] py-32">
         <div className="text-center">
           <div className="animate-spin rounded-full h-10 w-10 border-b-4 border-blue-900 mx-auto mb-3" />
           <p className="text-sm text-gray-400">Loading profile...</p>
@@ -205,12 +201,17 @@ export default function UserDetailPage() {
     .filter(Boolean).join(', ') || user.address || 'N/A'
 
   return (
-    <div className="p-4 sm:p-6 h-full overflow-y-auto flex flex-col">
+    /*
+     * FIX: On mobile the outer div is the ONE scroll container — no nested
+     * overflow areas below it.  On lg+ we restore the dual-panel layout where
+     * left and right panels scroll independently inside a height-constrained row.
+     */
+    <div className="p-4 sm:p-6 h-full overflow-y-auto">
 
       {/* Delete Confirm Modal */}
       {confirmDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4 border-2 border-red-500">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full border-2 border-red-500">
             <h3 className="text-base font-bold text-gray-900 mb-2">Delete User?</h3>
             <p className="text-sm text-gray-500 mb-5">
               Permanently delete <span className="font-semibold text-gray-800">{fullName || user.email}</span>? This cannot be undone.
@@ -231,9 +232,8 @@ export default function UserDetailPage() {
 
       {/* View Document Modal */}
       {viewDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-white w-[90%] max-w-4xl rounded-xl shadow-lg overflow-hidden flex flex-col">
-            {/* Header */}
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-3">
+          <div className="bg-white w-full max-w-4xl rounded-xl shadow-lg overflow-hidden flex flex-col">
             <div className="flex justify-between items-center p-3 border-b flex-shrink-0">
               <h3 className="text-sm font-semibold text-gray-700 truncate">
                 {getFilenameFromUrl(viewDoc.url)}
@@ -257,8 +257,6 @@ export default function UserDetailPage() {
                 <button onClick={() => setViewDoc(null)} className="text-gray-500 hover:text-red-500 text-sm px-1">✕</button>
               </div>
             </div>
-
-            {/* Content */}
             <div className="flex-1 overflow-auto" style={{ maxHeight: '80vh' }}>
               {/\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?.*)?$/i.test(viewDoc.url) ? (
                 <div className="flex items-center justify-center p-4 bg-gray-50 min-h-[300px]">
@@ -268,14 +266,14 @@ export default function UserDetailPage() {
                     className="max-w-full max-h-[75vh] object-contain rounded shadow"
                   />
                 </div>
-                ) : (
-                  <iframe
-                    src={`https://docs.google.com/viewer?url=${encodeURIComponent(viewDoc.url)}&embedded=true`}
-                    className="w-full"
-                    style={{ height: '75vh' }}
-                    title={getFilenameFromUrl(viewDoc.url)}
-                  />
-                )}
+              ) : (
+                <iframe
+                  src={`https://docs.google.com/viewer?url=${encodeURIComponent(viewDoc.url)}&embedded=true`}
+                  className="w-full"
+                  style={{ height: '75vh' }}
+                  title={getFilenameFromUrl(viewDoc.url)}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -285,11 +283,18 @@ export default function UserDetailPage() {
       {error   && <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>}
       {success && <div className="mb-4 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm">{success}</div>}
 
-      {/* Two-column layout */}
-      <div className="flex flex-col lg:flex-row gap-5 flex-1 min-h-0">
+      {/*
+       * Two-column layout
+       * Mobile  → flex-col, natural document flow, outer div scrolls
+       * Desktop → flex-row, each column scrolls independently via lg:overflow-y-auto
+       *           The row is height-constrained with lg:h-[calc(100vh-Npx)] so the
+       *           inner columns know how tall to be.  Adjust the offset (120px) to
+       *           match your admin shell's header + padding height.
+       */}
+      <div className="flex flex-col lg:flex-row gap-5 lg:h-[calc(100vh-120px)] lg:overflow-hidden">
 
         {/* ══════════ LEFT 40% ══════════ */}
-        <div className="w-full lg:w-[40%] flex flex-col gap-4 flex-shrink-0">
+        <div className="w-full lg:w-[40%] flex flex-col gap-4 flex-shrink-0 lg:overflow-y-auto lg:pr-1">
 
           {/* Back button */}
           <button
@@ -358,12 +363,18 @@ export default function UserDetailPage() {
             </div>
           </div>
 
+          {/* bottom padding so last card isn't flush against the scroll edge on desktop */}
+          <div className="h-4 flex-shrink-0" />
         </div>
 
         {/* ══════════ RIGHT 60% ══════════ */}
-        <div className="w-full lg:w-[60%] flex flex-col min-h-0 flex-1">
+        {/*
+         * On mobile  → just a normal block, no overflow, outer div scrolls
+         * On desktop → flex col, inner tab-content area scrolls
+         */}
+        <div className="w-full lg:w-[60%] flex flex-col lg:overflow-hidden">
 
-          {/* Action buttons — top right */}
+          {/* Action buttons */}
           <div className="flex items-center justify-end gap-2 mb-4 flex-shrink-0 flex-wrap">
             {user.status === 'pending' && (<>
               <button
@@ -412,8 +423,12 @@ export default function UserDetailPage() {
             ))}
           </div>
 
-          {/* Tab content — scrollable */}
-          <div className="flex-1 min-h-0 overflow-y-auto pb-6">
+          {/*
+           * Tab content
+           * Mobile  → no height/overflow constraint, flows naturally
+           * Desktop → flex-1 + min-h-0 + overflow-y-auto to fill remaining column height
+           */}
+          <div className="pb-8 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
 
             {detailLoading ? (
               <div className="text-center py-16">
@@ -446,7 +461,7 @@ export default function UserDetailPage() {
                       ].map(s => (
                         <div key={s.label} className="bg-white rounded-xl border-2 border-yellow-600 p-3 text-center">
                           <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
-                          <p className="text-xs text-gray-400 mt-0.5">{s.label}</p>
+                          <p className="text-xs text-gray-400 mt-0.5 leading-tight">{s.label}</p>
                         </div>
                       ))}
                     </div>
@@ -458,14 +473,14 @@ export default function UserDetailPage() {
                       </div>
                       <div className="p-4">
                         {/* Step dots */}
-                        <div className="flex items-center justify-center mb-4">
+                        <div className="flex items-center justify-center mb-4 overflow-x-auto py-1">
                           {Array.from({ length: totalLevels }, (_, i) => {
                             const lvl    = i + 1
                             const done   = lvl < currentLevel
                             const active = lvl === currentLevel
                             return (
                               <div key={lvl} className="flex items-center">
-                                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold border-2 transition-all ${
+                                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold border-2 transition-all flex-shrink-0 ${
                                   done   ? 'bg-blue-900 border-blue-900 text-white' :
                                   active ? 'bg-white border-blue-900 text-blue-900' :
                                            'bg-white border-gray-200 text-gray-300'
@@ -473,7 +488,7 @@ export default function UserDetailPage() {
                                   {done ? '✓' : lvl}
                                 </div>
                                 {lvl < totalLevels && (
-                                  <div className={`h-0.5 w-5 sm:w-7 ${lvl < currentLevel ? 'bg-blue-900' : 'bg-gray-200'}`} />
+                                  <div className={`h-0.5 w-4 sm:w-7 flex-shrink-0 ${lvl < currentLevel ? 'bg-blue-900' : 'bg-gray-200'}`} />
                                 )}
                               </div>
                             )
@@ -502,7 +517,7 @@ export default function UserDetailPage() {
                               <p className={`text-xs font-medium flex-1 ${done || active ? 'text-gray-800' : 'text-gray-400'}`}>
                                 Level {lvl} — {LEVEL_LABELS[lvl] ?? `Level ${lvl}`}
                               </p>
-                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${
                                 done ? 'bg-green-100 text-green-700' : active ? 'bg-blue-100 text-blue-900' : 'bg-gray-100 text-gray-400'
                               }`}>
                                 {done ? 'Complete' : active ? 'In Progress' : 'Locked'}
@@ -538,8 +553,7 @@ export default function UserDetailPage() {
                 {tab === 'exams' && (
                   <div className="space-y-3">
 
-                    {/* Always show 4-exam grid */}
-                    <div className="grid grid-cols-4 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       {[1, 2, 3, 4].map(id => {
                         const best = bestScores[id]
                         const contribution = best >= 75 ? 25 : best > 0 ? 12 : 0
@@ -563,7 +577,6 @@ export default function UserDetailPage() {
                       })}
                     </div>
 
-                    {/* Always show L3 progress bar */}
                     <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
                       <div className="flex items-center justify-between mb-1.5">
                         <span className="text-xs font-semibold text-gray-600">Level 3 Progress</span>
@@ -595,7 +608,6 @@ export default function UserDetailPage() {
                       </p>
                     </div>
 
-                    {/* Attempt history — only if there are attempts */}
                     {detail.exams.length === 0 ? (
                       <div className="bg-white rounded-xl border border-gray-200 p-8 flex flex-col items-center text-center">
                         <p className="text-3xl mb-3">📝</p>
@@ -623,7 +635,7 @@ export default function UserDetailPage() {
                                 })}
                               </p>
                             </div>
-                            <div className="text-right">
+                            <div className="text-right flex-shrink-0">
                               <p className={`text-lg font-bold ${e.passed ? 'text-green-600' : 'text-red-500'}`}>{e.score}%</p>
                               <p className="text-xs text-gray-400">{e.correctAnswers}/{e.totalQuestions}</p>
                             </div>
@@ -639,14 +651,12 @@ export default function UserDetailPage() {
                 {tab === 'documents' && (
                   <div className="space-y-2">
 
-                    {/* ✅ Download All button (only if may documents) */}
                     {detail.documents.length > 0 && (
                       <button
                         onClick={async () => {
                           try {
                             const JSZip = (await import('jszip')).default
                             const zip = new JSZip()
-
                             await Promise.all(
                               detail.documents.map(async (doc) => {
                                 const proxyUrl = `/api/download?url=${encodeURIComponent(doc.url)}&name=${encodeURIComponent(getFilenameFromUrl(doc.url))}`
@@ -655,7 +665,6 @@ export default function UserDetailPage() {
                                 zip.file(getFilenameFromUrl(doc.url), blob)
                               })
                             )
-
                             const zipBlob = await zip.generateAsync({ type: 'blob' })
                             const blobUrl = URL.createObjectURL(zipBlob)
                             const link = document.createElement('a')
@@ -676,7 +685,6 @@ export default function UserDetailPage() {
                       </button>
                     )}
 
-                    {/* ✅ If NO documents */}
                     {detail.documents.length === 0 ? (
                       <div className="bg-white rounded-xl border border-gray-200 p-12 flex flex-col items-center text-center">
                         <p className="text-3xl mb-3">📄</p>
@@ -686,10 +694,8 @@ export default function UserDetailPage() {
                         </p>
                       </div>
                     ) : (
-                      /* ✅ Document list */
                       detail.documents.map(doc => {
                         const filename = getFilenameFromUrl(doc.url)
-
                         return (
                           <div
                             key={doc.id}
@@ -702,17 +708,12 @@ export default function UserDetailPage() {
                                 />
                               </svg>
                             </div>
-
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium text-gray-900 truncate" title={filename}>
                                 {filename}
                               </p>
-                              <p className="text-xs text-gray-400">
-                                {formatDate(doc.uploadedAt)}
-                              </p>
+                              <p className="text-xs text-gray-400">{formatDate(doc.uploadedAt)}</p>
                             </div>
-
-                            {/* ✅ View (Modal trigger) */}
                             <button
                               onClick={() => setViewDoc(doc)}
                               className="px-3 py-1.5 rounded-lg bg-blue-900 text-white text-xs font-semibold hover:bg-blue-800 transition-colors flex-shrink-0"
@@ -728,10 +729,9 @@ export default function UserDetailPage() {
                 )}
               </>
             )}
-          </div>
-
-        </div>
-      </div>
+          </div>{/* end tab content */}
+        </div>{/* end right column */}
+      </div>{/* end two-column */}
     </div>
   )
 }
