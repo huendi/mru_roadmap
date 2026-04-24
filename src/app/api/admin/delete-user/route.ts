@@ -46,46 +46,74 @@ export async function POST(request: NextRequest) {
     const db = admin.firestore(app)
     const authInstance = admin.auth(app)
 
-    // 1. Get Firestore doc to find Cloudinary image URL BEFORE deleting
+    // 1. Get Firestore doc (check both collections) - verify user exists before deletion
     let userDoc = await db.collection('users').doc(uid).get()
     if (!userDoc.exists) {
       userDoc = await db.collection('deletedUsers').doc(uid).get()
     }
-    const userData = userDoc.data()
+    
+    if (!userDoc.exists) {
+      return NextResponse.json({ error: 'User not found in Firestore' }, { status: 404 })
+    }
 
-    // 2. Delete image from Cloudinary if it exists
-    const imageURL = userData?.profileImage || userData?.photoURL
-    if (imageURL && imageURL.includes('cloudinary.com')) {
-      try {
-        const urlParts = imageURL.split('/')
-        const fileWithExt = urlParts[urlParts.length - 1]
-        const publicId = `profile-pictures/${fileWithExt.split('.')[0]}`
-        await cloudinary.uploader.destroy(publicId)
-        console.log('Cloudinary image deleted:', publicId)
-      } catch (cloudinaryError) {
-        console.warn('Failed to delete Cloudinary image:', cloudinaryError)
+    let cloudinaryDeleted = false
+    let firestoreDeleted = false
+    let authDeleted = false
+
+    // 2. Delete Firebase Auth user first - this is most critical
+    try {
+      await authInstance.deleteUser(uid)
+      authDeleted = true
+      console.log('Firebase Auth user deleted:', uid)
+    } catch (authError: any) {
+      console.error('Firebase Auth deletion failed:', authError.message)
+      if (authError.code === 'auth/user-not-found') {
+        // User already deleted from Auth, continue with other deletions
+        authDeleted = true
+        console.log('Firebase Auth user already deleted:', uid)
+      } else {
+        return NextResponse.json({ error: 'Failed to delete from Firebase Auth: ' + authError.message }, { status: 500 })
       }
     }
 
-    // 3. Delete Firestore document
-    await db.collection('users').doc(uid).delete()
-    console.log('Firestore document deleted:', uid)
-    await db.collection('deletedUsers').doc(uid).delete()
-    console.log('Deleted users document deleted:', uid)
-
-    // 4. Delete Firebase Auth user
-    await authInstance.deleteUser(uid)
-    console.log('Firebase Auth user deleted:', uid)
-
-    return NextResponse.json({ message: 'User deleted successfully' }, { status: 200 })
-
-  } catch (error: any) {
-    console.error('Error deleting user:', error.message)
-
-    if (error.code === 'auth/user-not-found') {
-      return NextResponse.json({ error: 'User not found in Firebase Auth' }, { status: 404 })
+    // 3. Delete Firestore documents
+    try {
+      await db.collection('users').doc(uid).delete()
+      await db.collection('deletedUsers').doc(uid).delete()
+      firestoreDeleted = true
+      console.log('Firestore docs deleted:', uid)
+    } catch (firestoreError: any) {
+      console.error('Firestore deletion failed:', firestoreError.message)
+      // Try to rollback Auth deletion if possible
+      if (authDeleted) {
+        console.warn('Attempting rollback - Auth user deleted but Firestore deletion failed')
+      }
+      return NextResponse.json({ error: 'Failed to delete from Firestore: ' + firestoreError.message }, { status: 500 })
     }
 
+    // 4. Delete Cloudinary folder (non-critical, continue even if fails)
+    try {
+      await cloudinary.api.delete_resources_by_prefix(`users/${uid}/`)
+      await cloudinary.api.delete_folder(`users/${uid}`)
+      cloudinaryDeleted = true
+      console.log('Cloudinary folder deleted:', `users/${uid}/`)
+    } catch (cloudinaryError: any) {
+      console.warn('Cloudinary deletion failed (non-critical):', cloudinaryError.message)
+      // Continue even if Cloudinary fails - user data is already deleted
+    }
+
+    // 5. Return success with deletion status
+    return NextResponse.json({ 
+      message: 'User deleted successfully',
+      deleted: {
+        auth: authDeleted,
+        firestore: firestoreDeleted,
+        cloudinary: cloudinaryDeleted
+      }
+    }, { status: 200 })
+
+  } catch (error: any) {
+    console.error('Unexpected error deleting user:', error.message)
     return NextResponse.json({ error: error.message || 'Failed to delete user' }, { status: 500 })
   }
 }

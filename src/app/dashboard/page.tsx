@@ -30,12 +30,27 @@ const FORMS_CONFIG = {
 
 type FormKey = keyof typeof FORMS_CONFIG
 
-// Level 2 has 3 review videos — each worth 33.33% of progress
-const LEVEL2_VIDEO_REQUIREMENTS = ['watched_video_1', 'watched_video_2', 'watched_video_3']
+// Level 2 has 3 steps: Training Guide (33.33%), SLTC Link (33.33%), Certificate Upload (33.34%)
+function getLevel2Progress(requirements: string[], hasCertificate: boolean, certStatus?: string): number {
+  const trainingGuideCompleted = requirements.includes('training_guide_completed')
+  const sltcLinkClicked = requirements.includes('sltc_link_clicked')
+  
+  let progress = 0
+  if (trainingGuideCompleted) progress += 33.33
+  if (sltcLinkClicked) progress += 33.33
+  if (hasCertificate) {
+    progress += certStatus === 'approved' ? 33.34 : 16.67
+  }
+  
+  return Math.round(progress)
+}
 
-function getLevel2Progress(requirements: string[]): number {
-  const watched = LEVEL2_VIDEO_REQUIREMENTS.filter(r => requirements.includes(r)).length
-  return Math.round((watched / LEVEL2_VIDEO_REQUIREMENTS.length) * 100)
+// Level 2 has 3 review videos — each worth 33.33% of progress
+const LEVEL3_VIDEO_REQUIREMENTS = ['watched_video_1', 'watched_video_2', 'watched_video_3']
+
+function getLevel3Progress(requirements: string[]): number {
+  const watched = LEVEL3_VIDEO_REQUIREMENTS.filter(r => requirements.includes(r)).length
+  return Math.round((watched / LEVEL3_VIDEO_REQUIREMENTS.length) * 100)
 }
 
 export default function DashboardPage() {
@@ -46,7 +61,10 @@ export default function DashboardPage() {
   const [error, setError] = useState('')
   const [level1Documents, setLevel1Documents] = useState(0)
   const [showFormModal, setShowFormModal] = useState<FormKey | null>(null)
-  const [level3Progress, setLevel3Progress] = useState(0)
+  const [level4Progress, setLevel4Progress] = useState(0)
+  const [level1TotalDocs, setLevel1TotalDocs] = useState(7)
+  const [level1MinDocsToPass, setLevel1MinDocsToPass] = useState(4)
+  const [level2Cert, setLevel2Cert] = useState<any | null>(null)
 
   useEffect(() => {
     const unsubscribe = onAuthStateChange((userData) => {
@@ -84,82 +102,161 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (user) {
-      fetchLevel1Documents(user.uid)
-      updateLevels(user)
+      fetchLevel1Documents(user.uid, user)
     }
   }, [user])
 
   useEffect(() => {
-    if (user) updateLevels(user)
-  }, [level1Documents, user, level3Progress])
+    if (user) updateLevels(user, level1Documents, level1TotalDocs, level1MinDocsToPass, level2Cert)
+  }, [level4Progress, level2Cert])
 
   useEffect(() => {
   if (!user) return
-  const fetchLevel3Progress = async () => {
+  const fetchLevel4Progress = async () => {
     try {
-      const res = await fetch(`/api/user/level3-exams?uid=${user.uid}`)
+      const res = await fetch(`/api/user/level4-exams?uid=${user.uid}`)
       if (res.ok) {
         const data = await res.json()
         const exams: Array<{ passed: boolean; attempts: any[] }> = data.exams || []
-        const pct = exams.reduce((sum, r) => {
-          if (r.passed) return sum + 25
-          if (r.attempts.length > 0) return sum + 12
-          return sum
-        }, 0)
-        setLevel3Progress(pct)
+        const totalSets = data.totalSets || 0
+        
+        // Use same progress calculation as Level 4 page
+        const pct = totalSets > 0
+          ? Math.round(
+              exams.reduce((sum, r) => {
+                if (r.passed) return sum + (100 / totalSets)
+                if (r.attempts.length > 0) return sum + (100 / totalSets / 2)
+                return sum
+              }, 0)
+            )
+          : 0
+        setLevel4Progress(pct)
       }
     } catch (e) {
-      console.error('Failed to fetch level3 progress', e)
+      console.error('Failed to fetch level4 progress', e)
     }
   }
-  fetchLevel3Progress()
+  fetchLevel4Progress()
 }, [user])
 
-  const fetchLevel1Documents = async (uid: string) => {
+  const fetchLevel1Documents = async (uid: string, userData: User) => {
     try {
-      const response = await fetch(`/api/user/documents?uid=${uid}`)
-      if (response.ok) {
-        const allDocuments = await response.json()
-        const level1Docs = allDocuments.filter((doc: any) => doc.level === 1)
-        setLevel1Documents(level1Docs.length)
+      const [docsRes, settingsRes, reqRes] = await Promise.all([
+        fetch(`/api/user/documents?uid=${uid}`),
+        fetch('/api/admin/level1-settings'),
+        fetch(`/api/user/profile?uid=${uid}`),   // ✅ fetch all three in parallel
+      ])
+
+      let docCount = 0
+      let level2Certificate = null
+      if (docsRes.ok) {
+        const allDocuments = await docsRes.json()
+        docCount = allDocuments.filter((doc: any) => doc.level === 1).length
+        setLevel1Documents(docCount)
+        
+        // Get Level 2 certificate
+        level2Certificate = allDocuments.find((doc: any) => doc.level === 2)
+        setLevel2Cert(level2Certificate)
       }
+
+      let totalDocs = 7
+      let minDocsToPass = 4
+      if (settingsRes.ok) {
+        const s = await settingsRes.json()
+        totalDocs = s.requirements?.length ?? s.totalDocs ?? 7
+        minDocsToPass = s.minDocsToPass ?? 4
+        setLevel1TotalDocs(totalDocs)
+        setLevel1MinDocsToPass(minDocsToPass)
+      }
+
+      // ✅ Build freshUser from the parallel profile fetch — no artificial delay
+      let freshUser = userData
+      if (reqRes.ok) {
+        const profileData = await reqRes.json()
+        freshUser = {
+          ...userData,
+          requirementsCompleted: profileData.user?.requirementsCompleted ?? userData.requirementsCompleted,
+        }
+        // Update user state with latest requirements
+        setUser(freshUser)
+      }
+
+      updateLevels(freshUser, docCount, totalDocs, minDocsToPass, level2Certificate)
     } catch (error) {
       console.error('Error fetching Level 1 documents:', error)
     }
   }
 
-  const updateLevels = (userData: User) => {
+  const updateLevels = (userData: User, docCount?: number, totalDocs?: number, minDocsToPass?: number, level2Certificate?: any) => {
     const requirements = userData.requirementsCompleted || []
+    const advisorType = userData.advisorType
+    const count = docCount ?? level1Documents   // ← already correct, keep as-is
+    const total = totalDocs ?? level1TotalDocs
+    const minPass = minDocsToPass ?? level1MinDocsToPass
 
-    const updatedLevels = LEVELS_DATA.map((level) => {
-      const isUnlocked = level.id <= getNextUnlockedLevel(
+    // Pass 1: compute progress + isUnlocked only
+    const levelsWithProgress = LEVELS_DATA.map((level) => {
+      const RETURNEE_SKIP = [3, 4, 5]
+      
+      if (advisorType === 'returnee' && RETURNEE_SKIP.includes(level.id)) {
+        return { ...level, isUnlocked: false, progress: 0, isCompleted: false, skipped: true }
+      }
+
+      // Special unlock logic for returnee advisors
+      let isUnlocked = level.id <= getNextUnlockedLevel(
         userData.currentLevel,
         requirements,
-        level1Documents
+        level1Documents,
+        advisorType,
+        minPass
       )
+      
+      // For returnee advisors, if level 2 is completed, unlock level 6
+      if (advisorType === 'returnee' && level.id === 6) {
+        const level2Req = LEVEL_REQUIREMENTS[2] || []
+        const level2Completed = level2Req.every(req => requirements.includes(req.id))
+        const hasLevel2Cert = !!level2Certificate && level2Certificate.status === 'approved'
+        if (level2Completed && hasLevel2Cert) {
+          isUnlocked = true
+        }
+      }
 
       let progress: number
 
       if (level.id === 1) {
-        const introComplete = requirements.includes('read_intro')
-        const introProgress = introComplete ? 50 : 0
-        const docProgress = (Math.min(level1Documents, 7) / 7) * 50
-        progress = Math.round(introProgress + docProgress)
+        // Progress is based on total documents uploaded out of total available documents
+        const docProgress = (Math.min(count, total) / total) * 100
+        progress = Math.round(docProgress)
       } else if (level.id === 2) {
-        // ── Level 2: progress based on watched review videos ──
-        progress = getLevel2Progress(requirements)
+        const hasLevel2Cert = !!level2Certificate
+        const certStatus = level2Certificate?.status
+        progress = getLevel2Progress(requirements, hasLevel2Cert, certStatus)
       } else if (level.id === 3) {
-        // Level 3: fetch exam records to compute real progress
-        // We use level3Progress state computed separately
-        progress = level3Progress
-      } else if (level.id === 3) {
-        progress = level3Progress
+        progress = getLevel3Progress(requirements)
+      } else if (level.id === 4) {
+        progress = level4Progress
       } else {
         progress = getLevelProgress(level.id, requirements)
       }
 
-      const isCompleted = progress === 100 && level.id <= userData.currentLevel && isUnlocked
-      return { ...level, isUnlocked, progress, isCompleted }
+      return { ...level, isUnlocked, progress }
+    })
+
+    // Pass 2: now compute isCompleted — full levelsWithProgress is available
+    const updatedLevels = levelsWithProgress.map((level) => {
+      if ((level as any).skipped) return level  // returnee skipped levels, leave as-is
+
+      const allPreviousCompleted = levelsWithProgress
+        .filter((l: any) => l.id < level.id)
+        .every((l: any) => l.progress === 100)
+
+      // ✅ Level 1 is only truly complete when intro read + min docs uploaded (based on admin settings)
+      // But progress is 100% based on documents only
+      const isCompleted = level.id === 1
+        ? requirements.includes('read_intro') && count >= minPass
+        : level.progress === 100 && level.isUnlocked && allPreviousCompleted
+
+      return { ...level, isCompleted }
     })
 
     setLevels(updatedLevels)
@@ -218,9 +315,18 @@ export default function DashboardPage() {
                 <h2 className="text-lg sm:text-xl lg:text-2xl font-bold mb-1 sm:mb-2 break-words">
                   Welcome back, {fullName}!
                 </h2>
-                <p className="text-yellow-100 text-xs sm:text-sm mb-3 sm:mb-4">
+                <p className="text-yellow-100 text-xs sm:text-sm mb-1">
                   Your Financial Advisor Journey Progress
                 </p>
+                {user?.advisorType && (
+                  <span className={`inline-block mb-3 sm:mb-4 px-3 py-0.5 rounded-full text-xs font-semibold ${
+                    user.advisorType === 'new'
+                      ? 'bg-green-400/20 text-green-200 border border-green-400/40'
+                      : 'bg-blue-400/20 text-blue-200 border border-blue-400/40'
+                  }`}>
+                    {user.advisorType === 'new' ? '🟢 New Financial Advisor' : '🔵 Returnee Financial Advisor'}
+                  </span>
+                )}
                 <div className="grid grid-cols-3 gap-2 sm:gap-4 text-center">
                   <div>
                     <p className="text-xs text-yellow-100">Current Level</p>
@@ -304,7 +410,9 @@ export default function DashboardPage() {
                         ? level.isCompleted
                           ? 'bg-green-50 border-2 border-green-200 text-green-800 hover:bg-green-100'
                           : 'bg-blue-50 border-2 border-blue-200 text-blue-800 hover:bg-blue-100'
-                        : 'bg-gray-50 border-2 border-gray-200 text-gray-400 cursor-not-allowed'
+                        : (level as any).skipped
+                          ? 'bg-blue-50 border-2 border-blue-200 text-blue-600 cursor-not-allowed'
+                          : 'bg-gray-50 border-2 border-gray-200 text-gray-400 cursor-not-allowed'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
@@ -321,10 +429,17 @@ export default function DashboardPage() {
                         </span>
                       )}
 
+                      {/* Inside the level card button, replace the lock icon section */}
                       {!level.isUnlocked && (
-                        <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                        </svg>
+                        (level as any).skipped ? (
+                          <span className="text-xs font-medium px-2 py-0.5 rounded bg-blue-100 text-blue-600 flex-shrink-0">
+                            Skipped
+                          </span>
+                        ) : (
+                          <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                          </svg>
+                        )
                       )}
                     </div>
 

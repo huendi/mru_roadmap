@@ -30,55 +30,145 @@ function parseQuestions(text: string): Question[] {
 
   let current: Partial<Question> | null = null
   let questionLines: string[] = []
+  let questionCounter = 1
 
-  const optionRegex = /^([A-F])\.\s+(.+)$/
-  const answerRegex = /^ANSWER:\s*([A-F])$/i
-  const questionStartRegex = /^(\d+)\.\s+(.+)$/
+  // Enhanced flexible regex patterns
+  const optionRegexes = [
+    /^([A-Fa-f])\.\s*(.+)$/,           // "A. Option text"
+    /^([A-Fa-f])\)\s*(.+)$/,           // "A) Option text"  
+    /^([A-Fa-f])\s+(.+)$/,             // "A Option text"
+    /^([A-Fa-f])\s*-\s*(.+)$/,         // "A - Option text"
+    /^([A-Fa-f])\s*–\s*(.+)$/,         // "A – Option text"
+  ]
+  
+  const answerRegexes = [
+    /^ANSWER:\s*([A-Fa-f])$/i,         // "ANSWER: A"
+    /^Answer:\s*([A-Fa-f])$/i,         // "Answer: A"
+    /^answer:\s*([A-Fa-f])$/i,         // "answer: A"
+    /^ANS:\s*([A-Fa-f])$/i,            // "ANS: A"
+    /^Ans:\s*([A-Fa-f])$/i,            // "Ans: A"
+    /^ans:\s*([A-Fa-f])$/i,            // "ans: A"
+    /^([A-Fa-f])\s*is\s*the\s*answer$/i, // "A is the answer"
+    /^Correct\s*answer:\s*([A-Fa-f])$/i, // "Correct answer: A"
+    /^Key:\s*([A-Fa-f])$/i,            // "Key: A"
+  ]
+  
+  const questionStartRegexes = [
+    /^(\d+)\.\s*(.+)$/,                // "1. Question text"
+    /^(\d+)\)\s*(.+)$/,                // "1) Question text"
+    /^(\d+)\s+(.+)$/,                  // "1 Question text"
+    /^Q(\d+)\.?\s*(.+)$/i,             // "Q1. Question text" or "Q1 Question text"
+    /^Question\s+(\d+):\s*(.+)$/i,     // "Question 1: Question text"
+    /^(\d+)\.?\s*(.+)$/,               // "1. Question text" or "1 Question text"
+  ]
 
   const saveCurrentQuestion = () => {
     if (
       current &&
-      current.num !== undefined &&
       current.question &&
       current.options &&
       Object.keys(current.options).length >= 2 &&
       current.answer
     ) {
       questions.push({
-        id: String(current.num),
-        num: current.num,
+        id: String(current.num || questionCounter),
+        num: current.num || questionCounter,
         question: current.question.trim(),
         options: current.options,
         answer: current.answer.toUpperCase(),
       })
+      questionCounter++
     }
   }
 
-  for (const line of lines) {
-    const qMatch = line.match(questionStartRegex)
-    const optMatch = line.match(optionRegex)
-    const ansMatch = line.match(answerRegex)
+  const isOptionLine = (line: string) => {
+    return optionRegexes.some(regex => regex.test(line))
+  }
 
-    if (qMatch) {
+  const isAnswerLine = (line: string) => {
+    return answerRegexes.some(regex => regex.test(line))
+  }
+
+  const isQuestionStart = (line: string) => {
+    return questionStartRegexes.some(regex => regex.test(line))
+  }
+
+  const extractOption = (line: string) => {
+    for (const regex of optionRegexes) {
+      const match = line.match(regex)
+      if (match) {
+        return {
+          letter: match[1].toUpperCase(),
+          text: match[2].trim()
+        }
+      }
+    }
+    return null
+  }
+
+  const extractAnswer = (line: string) => {
+    for (const regex of answerRegexes) {
+      const match = line.match(regex)
+      if (match) {
+        return match[1].toUpperCase()
+      }
+    }
+    return null
+  }
+
+  const extractQuestionStart = (line: string) => {
+    for (const regex of questionStartRegexes) {
+      const match = line.match(regex)
+      if (match) {
+        return {
+          num: parseInt(match[1], 10),
+          text: match[2].trim()
+        }
+      }
+    }
+    return null
+  }
+
+  for (const line of lines) {
+    const questionStart = extractQuestionStart(line)
+    const option = extractOption(line)
+    const answer = extractAnswer(line)
+
+    if (questionStart) {
       saveCurrentQuestion()
       current = {
-        num: parseInt(qMatch[1], 10),
-        question: qMatch[2],
+        num: questionStart.num,
+        question: questionStart.text,
         options: {},
         answer: '',
       }
-      questionLines = [qMatch[2]]
-    } else if (current && optMatch) {
+      questionLines = [questionStart.text]
+    } else if (current && option) {
       current.options = current.options || {}
-      current.options[optMatch[1].toUpperCase()] = optMatch[2].trim()
-    } else if (current && ansMatch) {
-      current.answer = ansMatch[1].toUpperCase()
-    } else if (current && !optMatch && !ansMatch && questionLines.length > 0) {
+      current.options[option.letter] = option.text
+    } else if (current && answer) {
+      current.answer = answer
+    } else if (current && !isOptionLine(line) && !isAnswerLine(line)) {
       const hasOptions = current.options && Object.keys(current.options).length > 0
       if (!hasOptions) {
-        current.question = (current.question || '') + ' ' + line
-        questionLines.push(line)
+        // Check if this might be a new question without numbering
+        if (!current.question && line.length > 10 && !isOptionLine(line) && !isAnswerLine(line)) {
+          current.question = line
+          questionLines = [line]
+        } else if (current.question) {
+          // Continue the current question text
+          current.question = (current.question || '') + ' ' + line
+          questionLines.push(line)
+        }
       }
+    } else if (!current && line.length > 10 && !isOptionLine(line) && !isAnswerLine(line)) {
+      // Start a new question without explicit numbering
+      current = {
+        question: line,
+        options: {},
+        answer: '',
+      }
+      questionLines = [line]
     }
   }
 

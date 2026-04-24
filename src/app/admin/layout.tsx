@@ -12,7 +12,7 @@ declare global {
   }
 }
 
-type ActiveTab = 'overview' | 'users' | 'settings'
+type ActiveTab = 'overview' | 'users' | 'admins' | 'settings'
 
 // ─── Change Password Modal ────────────────────────────────────────────────────
 
@@ -45,7 +45,9 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
       setSuccess(true)
       setTimeout(() => { setSuccess(false); onClose() }, 2000)
     } catch (e: any) {
-      if (e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential') {
+      if (e.code === 'auth/invalid-credential') {
+        setError('This admin account is disabled.')
+      } else if (e.code === 'auth/wrong-password') {
         setError('Current password is incorrect.')
       } else {
         setError(e.message || 'Failed to update password.')
@@ -202,6 +204,11 @@ const IconUsers = () => (
     <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m9-4a4 4 0 11-8 0 4 4 0 018 0zm6 4a2 2 0 11-4 0 2 2 0 014 0zM7 16a2 2 0 11-4 0 2 2 0 014 0z" />
   </svg>
 )
+const IconAdmins = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+  </svg>
+)
 const IconSettings = () => (
   <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
@@ -221,7 +228,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [showChangePassword, setShowChangePassword] = useState(false)
 
   const activeTab: ActiveTab =
-    pathname.startsWith('/admin/users')    ? 'users' :
+    pathname.startsWith('/admin/users')    ? 'users'    :
+    pathname.startsWith('/admin/admins')   ? 'admins'   :
     pathname.startsWith('/admin/settings') ? 'settings' : 'overview'
 
   useEffect(() => {
@@ -249,6 +257,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const TABS = [
     { key: 'overview' as ActiveTab, label: 'Dashboard', href: '/admin',          icon: <IconDashboard /> },
     { key: 'users'    as ActiveTab, label: 'Users',     href: '/admin/users',    icon: <IconUsers /> },
+    { key: 'admins'   as ActiveTab, label: 'Admins',    href: '/admin/admins',   icon: <IconAdmins /> },
     { key: 'settings' as ActiveTab, label: 'Settings',  href: '/admin/settings', icon: <IconSettings /> },
   ]
 

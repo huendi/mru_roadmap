@@ -3,57 +3,57 @@ import { Level, Requirement, Exam, ExamQuestion } from '@/types'
 export const LEVELS_DATA: Level[] = [
   {
     id: 1,
-    title: 'Requirements',
-    description: 'Read introduction and upload required documents',
+    title: 'Basic Requirements',
+    description: 'Submit all required documents to get started',
     requirements: ['Read introduction', 'Upload documents'],
     isUnlocked: true,
     isCompleted: false,
   },
   {
     id: 2,
-    title: 'Reviewer',
-    description: 'Upload required documents and forms',
-    requirements: ['Upload ID', 'Submit form A', 'Submit form B'],
+    title: 'Sun Life Training Course',
+    description: 'Complete SLTC and upload your certificate',
+    requirements: ['Upload SLTC Certificate'],
     isUnlocked: false,
     isCompleted: false,
   },
   {
     id: 3,
-    title: 'Mock Exam',
-    description: 'Take the first mock exam',
-    requirements: ['Pass mock exam with 80%'],
+    title: 'Review for IC/IIAP Exam',
+    description: 'Study the reviewers for your chosen exam type',
+    requirements: ['Complete reviewer materials'],
     isUnlocked: false,
     isCompleted: false,
   },
   {
     id: 4,
-    title: 'Level 4 - Coming Soon',
-    description: 'Additional content will be available soon',
-    requirements: ['j'],
+    title: 'Mock Exam',
+    description: 'Take all 4 mock exams with passing grade',
+    requirements: ['Pass mock exams'],
     isUnlocked: false,
     isCompleted: false,
   },
   {
     id: 5,
-    title: 'Level 5 - Coming Soon',
-    description: 'Additional content will be available soon',
+    title: 'Pay & Take Licensure Exam',
+    description: 'Schedule and take your IC or IIAP licensure exam',
     requirements: [],
     isUnlocked: false,
     isCompleted: false,
   },
   {
     id: 6,
-    title: 'Level 6 - Coming Soon',
-    description: 'Additional content will be available soon',
+    title: 'Submit CA Forms & Requirements',
+    description: 'Submit CA forms, licensing fee, rookie training, and caddying',
     requirements: [],
     isUnlocked: false,
     isCompleted: false,
   },
   {
     id: 7,
-    title: 'Final Assessment & Certification',
-    description: 'Complete final assessment and receive certification',
-    requirements: ['Pass final exam'],
+    title: 'Contract Signing & Coding',
+    description: 'Complete contract signing and coding process',
+    requirements: [],
     isUnlocked: false,
     isCompleted: false,
   },
@@ -71,43 +71,76 @@ export const LEVEL_REQUIREMENTS: { [key: number]: Requirement[] } = {
     {
       id: 'documents_uploaded',
       title: 'Upload Required Documents',
-      description: 'Upload at least 3 required documents',
+      description: 'Upload all 7 required documents',
       type: 'file',
       isCompleted: false,
     },
   ],
   2: [
     {
-      id: 'upload_id',
-      title: 'Upload Valid ID',
-      description: 'Upload government-issued identification',
-      type: 'file',
-      isCompleted: false,
-    },
-    {
-      id: 'form_a',
-      title: 'Submit Form A',
-      description: 'Application form for financial advising',
-      type: 'file',
-      isCompleted: false,
-    },
-    {
-      id: 'form_b',
-      title: 'Submit Form B',
-      description: 'Background check authorization',
+      id: 'sltc_certificate',
+      title: 'Upload SLTC Certificate',
+      description: 'Upload proof of completing Sun Life Training Course',
       type: 'file',
       isCompleted: false,
     },
   ],
   3: [
     {
-      id: 'mock_exam',
-      title: 'Mock Exam Level 1',
-      description: 'Pass with 80% or higher',
+      id: 'watched_video_1',
+      title: 'Review Video 1',
+      description: 'Watch review video 1',
+      type: 'checkbox',
+      isCompleted: false,
+    },
+    {
+      id: 'watched_video_2',
+      title: 'Review Video 2',
+      description: 'Watch review video 2',
+      type: 'checkbox',
+      isCompleted: false,
+    },
+    {
+      id: 'watched_video_3',
+      title: 'Review Video 3',
+      description: 'Watch review video 3',
       type: 'checkbox',
       isCompleted: false,
     },
   ],
+  4: [
+    {
+      id: 'mock_exam_1',
+      title: 'Mock Exam 1',
+      description: 'Pass with required grade',
+      type: 'checkbox',
+      isCompleted: false,
+    },
+    {
+      id: 'mock_exam_2',
+      title: 'Mock Exam 2',
+      description: 'Pass with required grade',
+      type: 'checkbox',
+      isCompleted: false,
+    },
+    {
+      id: 'mock_exam_3',
+      title: 'Mock Exam 3',
+      description: 'Pass with required grade',
+      type: 'checkbox',
+      isCompleted: false,
+    },
+    {
+      id: 'mock_exam_4',
+      title: 'Mock Exam 4',
+      description: 'Pass with required grade',
+      type: 'checkbox',
+      isCompleted: false,
+    },
+  ],
+  5: [],
+  6: [],
+  7: [],
 }
 
 export const MOCK_EXAMS: { [key: number]: Exam } = {
@@ -185,36 +218,77 @@ export const MOCK_EXAMS: { [key: number]: Exam } = {
 export const getNextUnlockedLevel = (
   currentLevel: number,
   completedRequirements: string[],
-  level1DocCount?: number
+  level1DocCount?: number,
+  advisorType?: 'new' | 'returnee',
+  minDocsToPass?: number
 ): number => {
   if (currentLevel >= 7) return 7
 
   const requirements = completedRequirements || []
   const docCount = level1DocCount ?? 0
-  const introRead = requirements.includes('read_intro')
 
-  // Always check level 1 unlock condition first
-  const level1Unlocked = introRead && docCount >= 4
+  // ✅ If the user's DB level is already ≥ 2, they already passed Level 1.
+  // Don't re-gate them on intro/docs — trust currentLevel as a floor.
+  const level1AlreadyPassed = currentLevel >= 2
+  const introRead = requirements.includes('read_intro')
+  const minPass = minDocsToPass ?? 4
+  const level1Unlocked = level1AlreadyPassed || (introRead && docCount >= minPass)
 
   if (!level1Unlocked) return 1
 
-  if (currentLevel <= 1) return 2 // unlocked but not yet progressed
-
-  // Level 2+ → standard requirement check
-  const currentLevelReqs = LEVEL_REQUIREMENTS[currentLevel] || []
-  const allCurrentReqsCompleted = currentLevelReqs.every(req =>
-    requirements.includes(req.id)
-  )
-
-  if (allCurrentReqsCompleted && currentLevel < 7) {
-    return currentLevel + 1
+  // ✅ Returnee advisor special progression: skip 3, 4, 5 and go directly to 6
+  if (advisorType === 'returnee') {
+    const level2Req = LEVEL_REQUIREMENTS[2] || []
+    const level2Completed = level2Req.every(req => requirements.includes(req.id))
+    
+    if (currentLevel === 2 && level2Completed) {
+      return 6 // Jump directly to level 6
+    }
+    // Don't auto-unlock level 7 - level 6 needs to be completed first
+    if (currentLevel >= 6) {
+      return currentLevel
+    }
+    return currentLevel
   }
 
+  // ✅ Return at least currentLevel — never downgrade what DB already granted
+  const floor = Math.max(1, currentLevel)
+
+  // Validate the chain from level 2 up to currentLevel to find where they're blocked
+  for (let lvl = 2; lvl <= currentLevel; lvl++) {
+    const lvlReqs = LEVEL_REQUIREMENTS[lvl] || []
+    // ✅ Skip empty-requirement levels (5, 6, 7) — they're never "blocked"
+    if (lvlReqs.length === 0) continue
+    const allCompleted = lvlReqs.every(req => requirements.includes(req.id))
+    if (!allCompleted) return Math.max(floor, lvl)
+  }
+
+  if (currentLevel < 7) return currentLevel + 1
   return currentLevel
+}
+
+// NEW — tells dashboard which levels are accessible for returnee FA
+export const getUnlockedLevels = (
+  currentLevel: number,
+  completedRequirements: string[],
+  level1DocCount: number,
+  advisorType?: 'new' | 'returnee'
+): number[] => {
+  const RETURNEE_SKIP = [3, 4, 5]
+  const allLevels = [1, 2, 3, 4, 5, 6, 7]
+  const maxUnlocked = getNextUnlockedLevel(currentLevel, completedRequirements, level1DocCount, advisorType)
+
+  return allLevels.filter(id => {
+    if (advisorType === 'returnee' && RETURNEE_SKIP.includes(id)) return false
+    return id <= maxUnlocked
+  })
 }
 
 export const getLevelProgress = (levelId: number, completedRequirements: string[]): number => {
   const requirements = LEVEL_REQUIREMENTS[levelId] || []
+  
+  // For levels 5, 6, and 7, show 0% progress until they're properly implemented
+  if (requirements.length === 0 && (levelId === 5 || levelId === 6 || levelId === 7)) return 0
   if (requirements.length === 0) return 100
   
   // Ensure completedRequirements is an array

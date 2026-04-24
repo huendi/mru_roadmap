@@ -38,13 +38,20 @@ const calculateAge = (birthday?: string): number | string => {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Firestore helpers – soft-delete / restore / hard-delete
+// Firestore helpers – status / soft-delete / restore / hard-delete
 // ─────────────────────────────────────────────────────────────
 
+/** Persist status change to Firestore */
+async function updateUserStatus(uid: string, status: string) {
+  await setDoc(doc(db, 'users', uid), { status }, { merge: true })
+}
+
 /** Move a user document to the `deletedUsers` collection */
-async function softDeleteUser(user: User) {
+async function softDeleteUser(user: User, reason: string) {
   await setDoc(doc(db, 'deletedUsers', user.uid), {
     ...user,
+    status: 'frozen',
+    deleteReason: reason,
     deletedAt: serverTimestamp(),
   })
   await deleteDoc(doc(db, 'users', user.uid))
@@ -60,7 +67,7 @@ async function restoreUser(user: User) {
 
 /** Permanently delete from `deletedUsers` */
 async function hardDeleteUser(uid: string) {
-  const res = await fetch('/api/admin/delete-user', { // ← change this to your actual route path
+  const res = await fetch('/api/admin/delete-user', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ uid }),
@@ -82,7 +89,7 @@ async function getDeletedUsers(): Promise<User[]> {
 }
 
 // ─────────────────────────────────────────────────────────────
-// XLSX export (unchanged)
+// XLSX export
 // ─────────────────────────────────────────────────────────────
 const downloadXLSX = (users: User[]) => {
   const rows = users.map((u, idx) => ({
@@ -172,15 +179,33 @@ type Tab = 'users' | 'recycle'
 // ─────────────────────────────────────────────────────────────
 // Modal: generic two-step confirmation
 // ─────────────────────────────────────────────────────────────
+const PRESET_REASONS = [
+  'Inactive for 30 days',
+  'Violation of company policy',
+  'Duplicate account',
+  'Request from user',
+  'Other',
+]
+
 interface ConfirmModalProps {
   title: string
   description: string
   confirmLabel: string
   confirmClass: string
+  showRemarks?: boolean
   onCancel: () => void
-  onConfirm: () => void
+  onConfirm: (reason?: string) => void
 }
-function ConfirmModal({ title, description, confirmLabel, confirmClass, onCancel, onConfirm }: ConfirmModalProps) {
+
+function ConfirmModal({
+  title, description, confirmLabel, confirmClass,
+  showRemarks, onCancel, onConfirm
+}: ConfirmModalProps) {
+  const [selected, setSelected] = useState('')
+  const [custom, setCustom] = useState('')
+
+  const reason = selected === 'Other' ? custom.trim() : selected
+
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full">
@@ -195,11 +220,52 @@ function ConfirmModal({ title, description, confirmLabel, confirmClass, onCancel
             <p className="text-sm text-gray-500 mt-1">{description}</p>
           </div>
         </div>
+
+        {/* ✅ Remarks — only for soft-delete */}
+        {showRemarks && (
+          <div className="mb-4 space-y-2">
+            <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+              Reason for freezing account
+            </label>
+            <div className="space-y-1.5">
+              {PRESET_REASONS.map(r => (
+                <button
+                  key={r}
+                  onClick={() => { setSelected(r); setCustom('') }}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm border transition-colors ${
+                    selected === r
+                      ? 'bg-blue-900 text-white border-blue-900'
+                      : 'bg-white text-gray-700 border-gray-200 hover:border-blue-900'
+                  }`}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+            {selected === 'Other' && (
+              <textarea
+                value={custom}
+                onChange={e => setCustom(e.target.value)}
+                placeholder="Type your reason here..."
+                rows={2}
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900 resize-none mt-1"
+              />
+            )}
+          </div>
+        )}
+
         <div className="flex gap-3 justify-end">
-          <button onClick={onCancel} className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
+          >
             Cancel
           </button>
-          <button onClick={onConfirm} className={`px-4 py-2 rounded-lg text-white text-sm font-semibold transition-colors ${confirmClass}`}>
+          <button
+            onClick={() => onConfirm(reason)}
+            disabled={showRemarks && !reason}
+            className={`px-4 py-2 rounded-lg text-white text-sm font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${confirmClass}`}
+          >
             {confirmLabel}
           </button>
         </div>
@@ -231,7 +297,7 @@ export default function AdminUsersPage() {
 
   // Confirmation modals
   type PendingAction =
-    | { type: 'soft-delete'; user: User }
+    | { type: 'soft-delete'; user: User; reason?: string }
     | { type: 'restore'; user: User }
     | { type: 'hard-delete'; user: User }
 
@@ -270,11 +336,11 @@ export default function AdminUsersPage() {
   const showError = (msg: string) => { setError(msg); setTimeout(() => setError(''), 4000) }
   const showSuccess = (msg: string) => { setSuccess(msg); setTimeout(() => setSuccess(''), 3000) }
 
-  // ── Toggle disable/enable ────────────────────────────────────
+  // ── Toggle disable/enable — now persists to Firestore ────────
   const handleDisable = async (uid: string, currentStatus: string) => {
     try {
       const newStatus = currentStatus === 'disabled' ? 'active' : 'disabled'
-      // await updateUserStatus(uid, newStatus)   ← wire up your Firestore call here
+      await updateUserStatus(uid, newStatus) // ← persist to Firestore
       setUsers(prev => prev.map(u => u.uid === uid ? { ...u, status: newStatus } : u))
       showSuccess(`User ${newStatus === 'disabled' ? 'disabled' : 're-enabled'} successfully`)
     } catch (e: any) {
@@ -283,14 +349,18 @@ export default function AdminUsersPage() {
   }
 
   // ── Confirm dispatcher ───────────────────────────────────────
-  const handleConfirm = async () => {
+  const handleConfirm = async (reason?: string) => {
     if (!pending) return
     try {
       if (pending.type === 'soft-delete') {
-        await softDeleteUser(pending.user)
+        await softDeleteUser(pending.user, reason || 'No reason provided')
         setUsers(prev => prev.filter(u => u.uid !== pending.user.uid))
-        // also append to bin if bin is loaded
-        setDeletedUsers(prev => [...prev, { ...pending.user, deletedAt: new Date() } as any])
+        setDeletedUsers(prev => [...prev, {
+          ...pending.user,
+          status: 'frozen',
+          deleteReason: reason || 'No reason provided',
+          deletedAt: new Date(),
+        } as any])
         showSuccess('User moved to Recycle Bin')
 
       } else if (pending.type === 'restore') {
@@ -378,6 +448,7 @@ export default function AdminUsersPage() {
       {pending && modalConfig && (
         <ConfirmModal
           {...modalConfig}
+          showRemarks={pending.type === 'soft-delete'}  // ← only show for delete
           onCancel={() => setPending(null)}
           onConfirm={handleConfirm}
         />
@@ -489,13 +560,22 @@ export default function AdminUsersPage() {
                   ) : filteredUsers.map((u, idx) => (
                     <tr
                       key={u.uid}
-                      className="hover:bg-yellow-50/40 transition-colors cursor-pointer"
+                      // ✅ Gray background highlight for disabled rows
+                      className={`transition-colors cursor-pointer ${
+                        u.status === 'disabled'
+                          ? 'bg-gray-100 hover:bg-gray-200 opacity-70'
+                          : 'hover:bg-yellow-50/40'
+                      }`}
                       onClick={() => router.push(`/admin/users/${u.uid}`)}
                     >
                       <td className="px-4 py-3 text-xs font-semibold text-gray-400 w-10">{idx + 1}</td>
                       <td className="px-4 py-3 whitespace-nowrap">
-                        <p className="font-semibold text-gray-900">{u.lastName || u.name || '—'}</p>
-                        {u.firstName && <p className="text-xs text-gray-400">{u.firstName}</p>}
+                        <p className={`font-semibold ${u.status === 'disabled' ? 'text-gray-400' : 'text-gray-900'}`}>
+                          {u.lastName || u.name || '—'}
+                        </p>
+                        {u.firstName && (
+                          <p className="text-xs text-gray-400">{u.firstName}</p>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-gray-500 text-xs max-w-[160px] truncate">{u.email}</td>
                       <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap hidden sm:table-cell">{formatDate(u.createdAt)}</td>
@@ -505,7 +585,7 @@ export default function AdminUsersPage() {
                       <td className="px-4 py-3">
                         <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
                           u.status === 'active'   ? 'bg-green-100 text-green-800' :
-                          u.status === 'disabled' ? 'bg-gray-100 text-gray-600' :
+                          u.status === 'disabled' ? 'bg-gray-200 text-gray-500' :
                           u.status === 'rejected' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-600'
                         }`}>{u.status || 'active'}</span>
                       </td>
@@ -522,12 +602,11 @@ export default function AdminUsersPage() {
                             className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
                               u.status === 'disabled'
                                 ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                : 'bg-gray-200 text-gray-500 hover:bg-gray-300'
                             }`}
                           >
                             {u.status === 'disabled' ? 'Enable' : 'Disable'}
                           </button>
-                          {/* ← Now triggers soft-delete with confirmation */}
                           <button
                             onClick={() => setPending({ type: 'soft-delete', user: u })}
                             className="px-3 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 text-xs font-semibold transition-colors"
@@ -599,14 +678,12 @@ export default function AdminUsersPage() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-1.5">
-                            {/* Restore with confirmation */}
                             <button
                               onClick={() => setPending({ type: 'restore', user: u })}
                               className="px-3 py-1.5 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 text-xs font-semibold transition-colors"
                             >
                               Restore
                             </button>
-                            {/* Hard delete with confirmation */}
                             <button
                               onClick={() => setPending({ type: 'hard-delete', user: u })}
                               className="px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 text-xs font-semibold transition-colors"

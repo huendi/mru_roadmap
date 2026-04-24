@@ -2,9 +2,6 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { signInWithEmailAndPassword } from 'firebase/auth'
-import { auth } from '@/lib/firebase'
-import { createNewAdmin } from '@/lib/adminSetup'
 
 type Step = 'verify' | 'newadmin' | 'pin' | 'success'
 
@@ -27,25 +24,15 @@ export default function AdminSetupPage() {
   const [confirmPin, setConfirmPin] = useState('')
   const [pinFocused, setPinFocused] = useState(false)
 
-  // Step 1: Verify admin password
-  const handleVerifyPassword = async (e: React.FormEvent) => {
+  // Step 1: Verify admin password (now just moves to next step)
+  const handleVerifyPassword = (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    setLoading(true)
-    try {
-      const yourEmail = process.env.NEXT_PUBLIC_ADMIN_EMAIL
-      if (!yourEmail) throw new Error('Admin email not configured in .env.local')
-      await signInWithEmailAndPassword(auth, yourEmail, yourPassword)
-      setStep('newadmin')
-    } catch (err: any) {
-      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-        setError('Incorrect password. Please try again.')
-      } else {
-        setError(err.message || 'Something went wrong.')
-      }
-    } finally {
-      setLoading(false)
+    if (yourPassword.length < 1) {
+      setError('Please enter your admin password.')
+      return
     }
+    setStep('newadmin')
   }
 
   // Step 2: Validate new admin fields → go to PIN
@@ -63,7 +50,7 @@ export default function AdminSetupPage() {
     setStep('pin')
   }
 
-  // Step 3: Set PIN → create admin
+  // Step 3: Set PIN → create admin (now calls secure API)
   const handleSetPin = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
@@ -77,8 +64,29 @@ export default function AdminSetupPage() {
     }
     setLoading(true)
     try {
-      const result = await createNewAdmin(newEmail, newPassword, pin)
-      if (!result.success) throw new Error(result.message)
+      const adminEmail = process.env.NEXT_PUBLIC_ADMIN_EMAIL
+      if (!adminEmail) throw new Error('Admin email not configured in .env.local')
+
+      const response = await fetch('/api/admin/create', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          adminEmail,
+          adminPassword: yourPassword,
+          newEmail,
+          newPassword,
+          pin
+        })
+      })
+
+      const result = await response.json()
+
+      if (!result.success) {
+        throw new Error(result.message)
+      }
+
       setStep('success')
     } catch (err: any) {
       setError(err.message || 'Failed to create admin account.')

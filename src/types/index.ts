@@ -1,4 +1,7 @@
+import { Timestamp } from 'firebase/firestore'
+
 export interface User {
+  advisorType?: 'new' | 'returnee'
   uid: string
   email: string
   displayName?: string
@@ -13,7 +16,8 @@ export interface User {
   houseStreet?: string   // Optional
   barangay?: string
   municipalityCity?: string
-  province?: string
+  province?: string      // Empty string for NCR (no province)
+  region?: string        // e.g. "National Capital Region", "Region V (Bicol Region)"
   zipCode?: string
   address?: string // Keep for backward compatibility
   gender?: 'male' | 'female' | 'other' | null
@@ -22,15 +26,16 @@ export interface User {
   currentJob?: string
   profileImage?: string
   role?: 'user' | 'admin'
-  status?: 'pending' | 'active' | 'disabled' | 'approved' | 'rejected'
+  status?: 'pending' | 'active' | 'disabled' | 'approved' | 'rejected' | 'frozen'
+  deleteReason?: string
   photoURL?: string // Keep for backward compatibility
   hasPassword?: boolean // Track if user has password set
   currentLevel: number
   requirementsCompleted: string[]
   examScores: ExamScore[]
   profileCompleted: boolean
-  createdAt: Date
-  updatedAt: Date
+  createdAt: Timestamp | Date
+  updatedAt: Timestamp | Date
 }
 
 export interface ExamScore {

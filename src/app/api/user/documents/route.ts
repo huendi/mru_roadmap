@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/firebase'
-import { doc, getDoc, updateDoc } from 'firebase/firestore'
+import { adminDb } from '@/lib/firebase-admin'
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,12 +10,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'User ID is required' }, { status: 400 })
     }
 
-    const userRef = doc(db, 'users', uid)
-    const userDoc = await getDoc(userRef)
+    const userRef = adminDb.collection('users').doc(uid)
+    const userDoc = await userRef.get()
     
-    if (userDoc.exists()) {
+    if (userDoc.exists) {
       const userData = userDoc.data()
-      return NextResponse.json(userData.uploadedDocuments || [])
+      return NextResponse.json(userData?.uploadedDocuments || [])
     }
     
     return NextResponse.json([])
@@ -38,22 +37,21 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'User ID, document type, and level are required' }, { status: 400 })
     }
 
-    const userRef = doc(db, 'users', uid)
-    const userDoc = await getDoc(userRef)
+    const userRef = adminDb.collection('users').doc(uid)
+    const userDoc = await userRef.get()
     
-    if (!userDoc.exists()) {
+    if (!userDoc.exists) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
     const userData = userDoc.data()
-    const existingDocuments = userData.uploadedDocuments || []
+    const existingDocuments = userData?.uploadedDocuments || []
     
-    // Remove the specific document by type and level
-    const updatedDocuments = existingDocuments.filter((doc: any) => 
-      !(doc.type === type && doc.level === level)
-    )
+    const updatedDocuments = existingDocuments.filter((doc: any) => {
+      return !(doc.type === type && (doc.level === level || doc.level === undefined || doc.level === null))
+    })
     
-    await updateDoc(userRef, {
+    await userRef.update({
       uploadedDocuments: updatedDocuments,
       updatedAt: new Date().toISOString()
     })
@@ -77,19 +75,40 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'User ID and documents array are required' }, { status: 400 })
     }
 
-    const userRef = doc(db, 'users', uid)
-    const userDoc = await getDoc(userRef)
+    const userRef = adminDb.collection('users').doc(uid)
+    const userDoc = await userRef.get()
     
-    if (userDoc.exists()) {
+    if (userDoc.exists) {
       const userData = userDoc.data()
-      const existingDocuments = userData.uploadedDocuments || []
+      const existingDocuments = userData?.uploadedDocuments || []
       
-      // Remove existing level 1 documents and add new ones
-      const otherLevelDocuments = existingDocuments.filter((doc: any) => doc.level !== 1)
-      const mergedDocuments = [...otherLevelDocuments, ...documents]
+      // Create a map of existing documents by their unique identifier (url + type + level)
+      const existingDocMap = new Map()
+      existingDocuments.forEach((doc: any) => {
+        const key = `${doc.url}_${doc.type}_${doc.level}`
+        existingDocMap.set(key, doc)
+      })
       
-      await updateDoc(userRef, {
-        uploadedDocuments: mergedDocuments,
+      // Update or add incoming documents
+      const updatedDocuments = [...existingDocuments]
+      
+      documents.forEach((incomingDoc: any) => {
+        const key = `${incomingDoc.url}_${incomingDoc.type}_${incomingDoc.level}`
+        const existingIndex = updatedDocuments.findIndex((doc: any) => 
+          `${doc.url}_${doc.type}_${doc.level}` === key
+        )
+        
+        if (existingIndex >= 0) {
+          // Update existing document
+          updatedDocuments[existingIndex] = incomingDoc
+        } else {
+          // Add new document
+          updatedDocuments.push(incomingDoc)
+        }
+      })
+
+      await userRef.update({
+        uploadedDocuments: updatedDocuments,
         updatedAt: new Date().toISOString()
       })
     }

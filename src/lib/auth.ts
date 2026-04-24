@@ -1,4 +1,4 @@
-// Updated authentication system with both email/password and Google Sign-In
+// lib/auth.ts
 import { 
   GoogleAuthProvider,
   signInWithPopup,
@@ -10,16 +10,17 @@ import {
   updateProfile,
   updatePassword as firebaseUpdatePassword
 } from 'firebase/auth'
-import { doc, setDoc, getDoc, updateDoc, collection, getDocs, deleteDoc } from 'firebase/firestore'
+import { doc, setDoc, getDoc, updateDoc, collection, getDocs } from 'firebase/firestore'
 import { auth, db } from './firebase'
 import { uploadToCloudinary } from './cloudinary'
 import { User } from '@/types'
 import { startInactivityTracking, stopInactivityTracking } from './session'
 
-// Admin emails - change this to your admin emails
+// ─────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────
 const ADMIN_EMAILS = ['minda_wendu@dadev.com', 'jantimothy.b.sese@sunlife.com.ph']
 
-// Auth error messages
 const AUTH_ERROR_MESSAGES: { [key: string]: string } = {
   'auth/user-not-found': 'No account found with this email address.',
   'auth/wrong-password': 'Incorrect password. Please try again.',
@@ -37,91 +38,123 @@ export const getAuthErrorMessage = (error: any): string => {
   return AUTH_ERROR_MESSAGES[error.code] || error.message || 'An error occurred. Please try again.'
 }
 
-// Check if user is admin
 export const isAdmin = (email: string): boolean => {
   return ADMIN_EMAILS.includes(email)
 }
 
+// ─────────────────────────────────────────────────────────────
+// Core helper — check both collections, return user or null
+// Always checks deletedUsers FIRST to catch frozen accounts
+// ─────────────────────────────────────────────────────────────
+const resolveUser = async (uid: string): Promise<User | null> => {
+  // 1. Check recycle bin first — frozen users must be blocked
+  const deletedSnap = await getDoc(doc(db, 'deletedUsers', uid))
+  if (deletedSnap.exists()) {
+    return deletedSnap.data() as User  // status: 'frozen' is already stored here
+  }
+
+  // 2. Check active users
+  const userSnap = await getDoc(doc(db, 'users', uid))
+  if (userSnap.exists()) {
+    return userSnap.data() as User
+  }
+
+  return null
+}
+
+// ─────────────────────────────────────────────────────────────
 // Google Sign-In
+// ─────────────────────────────────────────────────────────────
 export const signInWithGoogle = async (): Promise<User> => {
   try {
     const provider = new GoogleAuthProvider()
     const result = await signInWithPopup(auth, provider)
     const firebaseUser = result.user
-    
-    // Check if user already exists in database
-    const userRef = doc(db, 'users', firebaseUser.uid)
-    const userDoc = await getDoc(userRef)
-    
-    if (userDoc.exists()) {
-      // User exists, return existing data
-      const existingUser = userDoc.data() as User
-      console.log('Existing Google user found:', existingUser.status, existingUser.profileCompleted)
-      return existingUser
-    } else {
-      // Create new user with default values
-      console.log('Creating new Google user with pending status')
-      const newUser: User = {
-        uid: firebaseUser.uid,
-        email: firebaseUser.email || '',
-        displayName: firebaseUser.displayName || '',
-        photoURL: firebaseUser.photoURL || '',
-        role: isAdmin(firebaseUser.email || '') ? 'admin' : 'user',
-        status: isAdmin(firebaseUser.email || '') ? 'approved' : 'pending',
-        hasPassword: false,
-        currentLevel: 1,
-        requirementsCompleted: [],
-        examScores: [],
-        profileCompleted: false,
-        createdAt: new Date(),
-        updatedAt: new Date(),
+
+    // Check both collections — frozen check is inside resolveUser
+    const existing = await resolveUser(firebaseUser.uid)
+
+    if (existing) {
+      // If frozen, sign out immediately so Firebase session is cleared
+      // The returned object (status: 'frozen') lets auth page show the right UI
+      if (existing.status === 'frozen') {
+        await signOut(auth)
       }
-      
-      await setDoc(userRef, newUser)
-      return newUser
+      return existing
     }
+
+    // Truly new user — create pending record
+    const newUser: User = {
+      uid: firebaseUser.uid,
+      email: firebaseUser.email || '',
+      displayName: firebaseUser.displayName || '',
+      photoURL: firebaseUser.photoURL || '',
+      role: isAdmin(firebaseUser.email || '') ? 'admin' : 'user',
+      status: isAdmin(firebaseUser.email || '') ? 'approved' : 'pending',
+      hasPassword: false,
+      currentLevel: 1,
+      requirementsCompleted: [],
+      examScores: [],
+      profileCompleted: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }
+    await setDoc(doc(db, 'users', firebaseUser.uid), newUser)
+    return newUser
+
   } catch (error: any) {
     throw new Error(getAuthErrorMessage(error))
   }
 }
 
-// Sign in with email and password
+// ─────────────────────────────────────────────────────────────
+// Email/Password Sign-In
+// ─────────────────────────────────────────────────────────────
 export const signIn = async (email: string, password: string): Promise<User> => {
   try {
     const userCredential = await signInWithEmailAndPassword(auth, email, password)
+    const uid = userCredential.user.uid
+
+    // Check frozen first, same as Google sign-in
+    const existing = await resolveUser(uid)
+
+    if (existing?.status === 'frozen') {
+      await signOut(auth)
+      return existing
+    }
+
     return await createOrUpdateUser(userCredential.user, { hasPassword: true })
-  } catch (error) {
+  } catch (error: any) {
     throw new Error(getAuthErrorMessage(error))
   }
 }
 
-// Sign up with email and password
+// ─────────────────────────────────────────────────────────────
+// Sign Up
+// ─────────────────────────────────────────────────────────────
 export const signUp = async (email: string, password: string, additionalData?: Partial<User>): Promise<User> => {
   try {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password)
     return await createOrUpdateUser(userCredential.user, { ...additionalData, hasPassword: true })
-  } catch (error) {
+  } catch (error: any) {
     throw new Error(getAuthErrorMessage(error))
   }
 }
 
-// Create or update user in Firestore
+// ─────────────────────────────────────────────────────────────
+// Create or Update User in Firestore
+// ─────────────────────────────────────────────────────────────
 export const createOrUpdateUser = async (firebaseUser: FirebaseUser, additionalData?: Partial<User>): Promise<User> => {
   const userRef = doc(db, 'users', firebaseUser.uid)
   const userDoc = await getDoc(userRef)
-  
-  // Check if user is admin
   const isUserAdmin = isAdmin(firebaseUser.email || '')
-  
   const existingData = userDoc.data()
-  
+
   const userData: User = {
     uid: firebaseUser.uid,
     email: firebaseUser.email || '',
     displayName: additionalData?.name || firebaseUser.displayName || '',
-    // Combined full name
     name: additionalData?.name || existingData?.name || '',
-    // Split name fields
     firstName: additionalData?.firstName || existingData?.firstName || '',
     middleName: additionalData?.middleName || existingData?.middleName || '',
     lastName: additionalData?.lastName || existingData?.lastName || '',
@@ -144,7 +177,6 @@ export const createOrUpdateUser = async (firebaseUser: FirebaseUser, additionalD
   }
 
   if (userDoc.exists()) {
-    // Update existing user - filter out undefined values
     const cleanData: any = {}
     Object.keys(userData).forEach(key => {
       const value = userData[key as keyof User]
@@ -154,70 +186,101 @@ export const createOrUpdateUser = async (firebaseUser: FirebaseUser, additionalD
     })
     await updateDoc(userRef, cleanData)
   } else {
-    // Create new user
     await setDoc(userRef, userData)
   }
 
   return userData
 }
 
+// ─────────────────────────────────────────────────────────────
+// Auth State Listener
+// Key fix: uses resolveUser so frozen accounts are caught here too.
+// If frozen → sign out immediately, pass frozen user to callback
+// so auth page can show the frozen UI then clear it.
+// ─────────────────────────────────────────────────────────────
+export const onAuthStateChange = (callback: (user: User | null) => void) => {
+  return onAuthStateChanged(auth, async (firebaseUser) => {
+    if (!firebaseUser) {
+      stopInactivityTracking()
+      callback(null)
+      return
+    }
+
+    try {
+      const userData = await resolveUser(firebaseUser.uid)
+
+      if (!userData) {
+        // No record found in either collection — treat as unauthenticated
+        stopInactivityTracking()
+        callback(null)
+        return
+      }
+
+      if (userData.status === 'frozen') {
+        // Force sign out — don't let them stay authenticated
+        stopInactivityTracking()
+        await signOut(auth)
+        callback(userData)  // auth page shows frozen UI, then clears on "Back to Login"
+        return
+      }
+
+      startInactivityTracking()
+      callback(userData)
+
+    } catch (error) {
+      console.error('Error fetching user data:', error)
+      stopInactivityTracking()
+      callback(null)
+    }
+  })
+}
+
+// ─────────────────────────────────────────────────────────────
+// Get user by UID (checks both collections)
+// ─────────────────────────────────────────────────────────────
+export const getUserByUid = async (uid: string): Promise<User | null> => {
+  return resolveUser(uid)
+}
+
+// ─────────────────────────────────────────────────────────────
+// Get all active users (admin)
+// ─────────────────────────────────────────────────────────────
+export const getAllUsers = async (): Promise<User[]> => {
+  const snapshot = await getDocs(collection(db, 'users'))
+  return snapshot.docs.map(d => d.data() as User)
+}
+
+// ─────────────────────────────────────────────────────────────
 // Update user profile
+// ─────────────────────────────────────────────────────────────
 export const updateUserProfile = async (uid: string, data: Partial<User>): Promise<void> => {
   const userRef = doc(db, 'users', uid)
-  await updateDoc(userRef, {
-    ...data,
-    updatedAt: new Date()
-  })
+  await updateDoc(userRef, { ...data, updatedAt: new Date() })
 }
 
-// Update user status (for admin approval)
-export const updateUserStatus = async (uid: string, status: 'pending' | 'approved' | 'rejected' | 'active' | 'disabled'): Promise<void> => {
+// ─────────────────────────────────────────────────────────────
+// Update user status (admin approval)
+// ─────────────────────────────────────────────────────────────
+export const updateUserStatus = async (
+  uid: string,
+  status: 'pending' | 'approved' | 'rejected' | 'active' | 'disabled'
+): Promise<void> => {
   const userRef = doc(db, 'users', uid)
-  await updateDoc(userRef, {
-    status,
-    updatedAt: new Date()
-  })
+  await updateDoc(userRef, { status, updatedAt: new Date() })
 }
 
-// Get user by UID
-export const getUserByUid = async (uid: string): Promise<User | null> => {
-  const userRef = doc(db, 'users', uid)
-  const userDoc = await getDoc(userRef)
-  
-  if (userDoc.exists()) {
-    return userDoc.data() as User
-  }
-  return null
-}
-
-// Get all users (for admin)
-export const getAllUsers = async (): Promise<User[]> => {
-  const usersRef = collection(db, 'users')
-  const usersSnapshot = await getDocs(usersRef)
-  
-  return usersSnapshot.docs.map(doc => doc.data() as User)
-}
-
-// Change user password
+// ─────────────────────────────────────────────────────────────
+// Change Password
+// ─────────────────────────────────────────────────────────────
 export const changePassword = async (newPassword: string): Promise<void> => {
   try {
     const currentUser = auth.currentUser
-    if (!currentUser) {
-      throw new Error('No user is currently signed in')
-    }
-    
-    // Update password in Firebase Auth
+    if (!currentUser) throw new Error('No user is currently signed in')
+
     await firebaseUpdatePassword(currentUser, newPassword)
-    
-    // Update hasPassword flag in Firestore
     const userRef = doc(db, 'users', currentUser.uid)
-    await updateDoc(userRef, { 
-      hasPassword: true,
-      updatedAt: new Date()
-    })
-    
+    await updateDoc(userRef, { hasPassword: true, updatedAt: new Date() })
   } catch (error: any) {
-    console.error('Error changing password:', error)
     if (error.code === 'auth/requires-recent-login') {
       throw new Error('Please sign out and sign in again before changing your password')
     }
@@ -225,47 +288,34 @@ export const changePassword = async (newPassword: string): Promise<void> => {
   }
 }
 
-// Upload profile picture to Cloudinary
+// ─────────────────────────────────────────────────────────────
+// Upload Profile Picture
+// ─────────────────────────────────────────────────────────────
 export const uploadProfilePicture = async (uid: string, file: File): Promise<string> => {
   try {
-    console.log('UploadProfilePicture called:', {
-      uid,
-      fileName: file.name,
-      fileSize: file.size,
-      fileType: file.type
-    })
-    
-    // Upload to Cloudinary
     const profileImageURL = await uploadToCloudinary(file, 'profile-pictures')
-    console.log('Cloudinary upload successful, URL:', profileImageURL)
-    
-    // Update user profile in Firebase Auth (for display purposes)
+
     const currentUser = auth.currentUser
     if (currentUser) {
-      console.log('Updating Firebase Auth profile...')
       await updateProfile(currentUser, { photoURL: profileImageURL })
-      console.log('Firebase Auth profile updated')
     }
-    
-    // Update user document in Firestore
-    console.log('Updating Firestore document...')
-    await updateUserProfile(uid, { 
+
+    await updateUserProfile(uid, {
       profileImage: profileImageURL,
-      photoURL: profileImageURL // Keep for backward compatibility
+      photoURL: profileImageURL,
     })
-    console.log('Firestore document updated')
-    
+
     return profileImageURL
   } catch (error) {
-    console.error('Error uploading profile picture:', error)
     throw new Error(`Failed to upload profile picture: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
 }
 
-// Sign out user
+// ─────────────────────────────────────────────────────────────
+// Sign Out
+// ─────────────────────────────────────────────────────────────
 export const signOutUser = async (): Promise<void> => {
   try {
-    // Stop inactivity tracking when user signs out
     stopInactivityTracking()
     await signOut(auth)
   } catch (error) {
@@ -273,30 +323,9 @@ export const signOutUser = async (): Promise<void> => {
   }
 }
 
-// Listen to auth state changes
-export const onAuthStateChange = (callback: (user: User | null) => void) => {
-  return onAuthStateChanged(auth, async (firebaseUser) => {
-    if (firebaseUser) {
-      try {
-        const userData = await getUserByUid(firebaseUser.uid)
-        
-        // Start inactivity tracking when user is authenticated
-        startInactivityTracking()
-        
-        callback(userData)
-      } catch (error) {
-        console.error('Error fetching user data:', error)
-        callback(null)
-      }
-    } else {
-      // Stop inactivity tracking when user is not authenticated
-      stopInactivityTracking()
-      callback(null)
-    }
-  })
-}
-
-// Delete user - let the API handle Firestore, Cloudinary, and Firebase Auth
+// ─────────────────────────────────────────────────────────────
+// Delete User (via API)
+// ─────────────────────────────────────────────────────────────
 export const deleteUser = async (uid: string): Promise<void> => {
   try {
     const response = await fetch('/api/admin/delete-user', {
@@ -309,13 +338,10 @@ export const deleteUser = async (uid: string): Promise<void> => {
       const errorData = await response.json()
       throw new Error(errorData.error || 'Failed to delete user')
     }
-
-    console.log('User deleted from Firestore, Firebase Auth, and Cloudinary')
   } catch (error) {
     console.error('Error deleting user:', error)
     throw new Error('Failed to delete user')
   }
 }
 
-// Export auth instance for API routes
 export { auth }

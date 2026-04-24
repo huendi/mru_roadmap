@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/firebase'
-import { doc, updateDoc } from 'firebase/firestore'
+import { adminDb } from '@/lib/firebase-admin'
 
 export async function POST(request: NextRequest) {
   try {
     const { uid, level } = await request.json()
-    
+
     if (!uid) {
       return NextResponse.json({ error: 'User ID is required' }, { status: 400 })
     }
@@ -14,9 +13,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid level' }, { status: 400 })
     }
 
-    // Update user's current level
-    const userRef = doc(db, 'users', uid)
-    await updateDoc(userRef, {
+    const userRef = adminDb.doc(`users/${uid}`)
+    await userRef.update({
       currentLevel: level,
       updatedAt: new Date().toISOString()
     })

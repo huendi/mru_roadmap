@@ -12,6 +12,7 @@ export default function AuthPage() {
   const [success, setSuccess] = useState('')
   const [pendingUser, setPendingUser] = useState<User | null>(null)
   const [isRedirecting, setIsRedirecting] = useState(false)
+  const [frozenReason, setFrozenReason] = useState('')
 
   // Login form data
   const [loginData, setLoginData] = useState({
@@ -59,6 +60,14 @@ export default function AuthPage() {
             
             case 'disabled':
               setError('Your account has been disabled. Please contact your Unit Manager.')
+              signOutUser() // or await signOutUser() in handleGoogleSignIn
+              setIsRedirecting(false)
+              break
+
+            // ✅ ADD THIS
+            case 'frozen':
+              setFrozenReason(user.deleteReason || 'Your account has been frozen.')
+              setError('frozen')
               signOutUser()
               setIsRedirecting(false)
               break
@@ -90,7 +99,11 @@ export default function AuthPage() {
       setSuccess('Login successful! Redirecting...')
       // Redirect is handled by useEffect
     } catch (error: any) {
-      setError(error.message || 'Login failed')
+      if (error.code === 'auth/invalid-credential') {
+        setError('Your account is disabled, please contact your manager.')
+      } else {
+        setError(error.message || 'Login failed')
+      }
     } finally {
       setLoading(false)
     }
@@ -152,6 +165,14 @@ export default function AuthPage() {
           await signOutUser()
           setIsRedirecting(false)
           break
+          
+        case 'frozen':
+          setFrozenReason(user.deleteReason || 'Your account has been frozen.')
+          setError('frozen')
+          await signOutUser()
+          setIsRedirecting(false)
+          break
+          
         default:
           setIsRedirecting(true)
           if (!user.profileCompleted) {
@@ -176,7 +197,6 @@ export default function AuthPage() {
           {pendingUser ? (
             /* Pending User UI */
             <div className="text-center">
-              {/* Header */}
               <div className="text-center mb-8">
                 <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <svg className="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -187,7 +207,6 @@ export default function AuthPage() {
                 <p className="text-gray-600">Financial Advisor Certification Program</p>
               </div>
 
-              {/* Pending Message */}
               <div className="mb-8">
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 mb-6">
                   <div className="flex items-center mb-4">
@@ -197,7 +216,7 @@ export default function AuthPage() {
                     <h3 className="text-lg font-semibold text-yellow-800">Your account is pending approval</h3>
                   </div>
                   <p className="text-yellow-700 text-sm mb-4">
-                    Your account has been created and is currently awaiting administrator approval. 
+                    Your account has been created and is currently awaiting administrator approval.
                     You will be able to access the system once an admin has reviewed and approved your account.
                   </p>
                   <div className="bg-white rounded-lg p-3">
@@ -210,7 +229,6 @@ export default function AuthPage() {
                   </div>
                 </div>
 
-                {/* Instructions */}
                 <div className="text-left bg-gray-50 rounded-lg p-4 mb-6">
                   <h4 className="font-medium text-gray-900 mb-2">Next Steps:</h4>
                   <ul className="text-sm text-gray-600 space-y-1">
@@ -220,7 +238,6 @@ export default function AuthPage() {
                   </ul>
                 </div>
 
-                {/* Back to Login Button */}
                 <button
                   onClick={handleSignOut}
                   className="w-full bg-yellow-600 text-white py-3 rounded-lg hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-offset-2 transition-colors"
@@ -229,6 +246,42 @@ export default function AuthPage() {
                 </button>
               </div>
             </div>
+
+          ) : error === 'frozen' ? (
+            /* ✅ Frozen Account UI */
+            <div className="text-center">
+              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              </div>
+              <h1 className="text-2xl font-bold text-gray-900 mb-2">Account Frozen</h1>
+              <p className="text-gray-600 mb-6">Financial Advisor Certification Program</p>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6 text-left">
+                <div className="flex items-center mb-3">
+                  <svg className="w-5 h-5 text-blue-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <h3 className="text-sm font-semibold text-blue-800">Your account has been frozen</h3>
+                </div>
+                <div className="bg-white rounded-lg p-3 mb-3">
+                  <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1">Reason</p>
+                  <p className="text-sm text-gray-800 font-medium">{frozenReason}</p>
+                </div>
+                <p className="text-xs text-blue-700">
+                  Please contact your Unit Manager to resolve this issue and restore your account access.
+                </p>
+              </div>
+
+              <button
+                onClick={() => { setError(''); setFrozenReason('') }}
+                className="w-full bg-blue-900 text-white py-3 rounded-lg hover:bg-blue-800 transition-colors font-semibold"
+              >
+                Back to Login
+              </button>
+            </div>
+
           ) : (
             /* Normal Login UI */
             <>
