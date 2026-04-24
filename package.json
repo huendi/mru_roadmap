@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "deploy": "npm run build && firebase deploy"
+    "deploy": "next build"
   },
   "dependencies": {
     "@types/node": "^20",
