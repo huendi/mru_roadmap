@@ -21,7 +21,7 @@ function shuffleArray<T>(arr: T[]): T[] {
 
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url)
+    const searchParams = req.nextUrl.searchParams
     const examId = Number(searchParams.get('examId'))
 
     if (!examId || examId < 1) {
