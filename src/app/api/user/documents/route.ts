@@ -1,13 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { adminDb } from '@/lib/firebase-admin'
+import { userAuth } from '@/lib/user-auth'
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
-    const uid = searchParams.get('uid')
+    const queryUid = searchParams.get('uid')
     
-    if (!uid) {
-      return NextResponse.json({ error: 'User ID is required' }, { status: 400 })
+    let uid: string
+    
+    if (queryUid) {
+      // If uid is provided as query param, use it (for admin/debug purposes)
+      uid = queryUid
+    } else {
+      // Otherwise, get the current authenticated user
+      const authResult = await userAuth(request)
+      if (!authResult.success) {
+        return NextResponse.json({ error: authResult.error }, { status: 401 })
+      }
+      uid = authResult.user!.uid
     }
 
     const userRef = adminDb.collection('users').doc(uid)
@@ -15,7 +26,14 @@ export async function GET(request: NextRequest) {
     
     if (userDoc.exists) {
       const userData = userDoc.data()
-      return NextResponse.json(userData?.uploadedDocuments || [])
+      const documents = userData?.uploadedDocuments
+      // Handle case where uploadedDocuments might be null, undefined, or not an array
+      if (Array.isArray(documents)) {
+        return NextResponse.json(documents)
+      } else {
+        console.log(`User ${uid} has no uploadedDocuments array or it's corrupted`)
+        return NextResponse.json([])
+      }
     }
     
     return NextResponse.json([])

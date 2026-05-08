@@ -3,6 +3,7 @@
 // admin/settings/components/Level1Panel.tsx
 
 import { useState, useEffect, useRef } from 'react'
+import { auth } from '@/lib/auth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -100,7 +101,7 @@ function TopBar({
 // ─── Requirement Row ──────────────────────────────────────────────────────────
 
 function RequirementRow({
-  req, index, total, isEditing, onUpdate, onRemove, onMove, onUploadSample, onRemoveSample, uploadingFor,
+  req, index, total, isEditing, onUpdate, onRemove, onMove, onUploadSample, onRemoveSample, uploadingFor, onToggleRequired,
 }: {
   req: Level1Requirement
   index: number
@@ -112,6 +113,7 @@ function RequirementRow({
   onUploadSample: (i: number, file: File) => Promise<void>
   onRemoveSample: (rIdx: number, sIdx: number) => void
   uploadingFor: number | null
+  onToggleRequired?: (i: number) => void
 }) {
   const sampleInputRef = useRef<HTMLInputElement>(null)
   const [expanded, setExpanded] = useState(false)
@@ -151,9 +153,9 @@ function RequirementRow({
           </span>
         )}
 
-        {isEditing ? (
+        {isEditing && onToggleRequired ? (
           <button
-            onClick={() => onUpdate(index, { ...req, required: !req.required })}
+            onClick={() => onToggleRequired(index)}
             className={`flex-shrink-0 text-[10px] font-bold px-2.5 py-1.5 rounded-lg border transition-all ${req.required ? 'bg-[#FEF2F2] border-[#FECACA] text-[#DC2626]' : 'bg-[#F8FAFC] border-[#E2E8F0] text-[#94A3B8]'}`}
           >
             {req.required ? '● Required' : '○ Optional'}
@@ -316,6 +318,7 @@ export default function Level1Panel() {
       const payload = {
         ...draft,
         totalDocs: draft.requirements.length,
+        adminEmail: auth.currentUser?.email || 'Admin',
       }
       const res = await fetch('/api/admin/level1-settings', {
         method: 'POST',
@@ -331,11 +334,66 @@ export default function Level1Panel() {
       setSaved(true)
       setIsEditing(false)
       setTimeout(() => setSaved(false), 3000)
+
+      // Log the settings update
+      try {
+        const { createAdminLog } = await import('@/lib/admin-logs')
+        await createAdminLog(
+          auth.currentUser?.email || 'Admin',
+          'Level 1 Settings',
+          'Settings Update',
+          'Saved Level 1 document requirements configuration'
+        )
+      } catch (logError) {
+        console.warn('Failed to create admin log for Level 1 save:', logError)
+      }
     } catch (e: any) {
       console.error('Save error:', e)
       setError(e?.message || 'Failed to save. Please try again.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleToggleRequired = async (index: number) => {
+    if (!draft) return
+    
+    const newRequirements = draft.requirements.map((req, i) => 
+      i === index ? { ...req, required: !req.required } : req
+    )
+    const newDraft = { ...draft, requirements: newRequirements }
+    setDraft(newDraft)
+    
+    // Auto-save the change
+    try {
+      const payload = {
+        ...newDraft,
+        totalDocs: newDraft.requirements.length,
+        adminEmail: auth.currentUser?.email || 'Admin',
+      }
+      const res = await fetch('/api/admin/level1-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (res.ok) {
+        setSettings(JSON.parse(JSON.stringify(payload)))
+
+        // Log the requirement toggle
+        try {
+          const { createAdminLog } = await import('@/lib/admin-logs')
+          await createAdminLog(
+            auth.currentUser?.email || 'Admin',
+            'Level 1 Settings',
+            'Settings Update',
+            'Toggled requirement required/optional status'
+          )
+        } catch (logError) {
+          console.warn('Failed to create admin log for Level 1 toggle:', logError)
+        }
+      }
+    } catch (error) {
+      console.error('Failed to save requirement change:', error)
     }
   }
 
@@ -521,6 +579,7 @@ export default function Level1Panel() {
                     key={req.type} req={req} index={i} total={draft.requirements.length}
                     isEditing={isEditing} onUpdate={updateReq} onRemove={removeReq} onMove={moveReq}
                     onUploadSample={uploadSample} onRemoveSample={removeSample} uploadingFor={uploadingFor}
+                    onToggleRequired={handleToggleRequired}
                   />
                 ))}
               </div>

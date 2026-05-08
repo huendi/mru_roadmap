@@ -28,7 +28,7 @@ export const setupAdminAccount = async (): Promise<{ success: boolean; message: 
       birthday: ADMIN_DATA.birthday,
       address: ADMIN_DATA.address,
       role: 'admin',
-      status: 'active',
+      status: 'approved',
       currentLevel: 1,
       requirementsCompleted: [],
       examScores: [],
@@ -43,10 +43,11 @@ export const setupAdminAccount = async (): Promise<{ success: boolean; message: 
 
     return { success: true, message: 'Admin account created successfully!' }
   } catch (error: any) {
+    // Don't expose Firebase error details to users
     if (error.code === 'auth/email-already-in-use') {
       return { success: false, message: 'Admin account already exists.' }
     }
-    return { success: false, message: error.message || 'Failed to create admin account' }
+    return { success: false, message: 'Failed to create admin account. Please try again.' }
   }
 }
 
@@ -73,7 +74,7 @@ export const createNewAdmin = async (
       profileImage: '',
       photoURL: '',
       role: 'admin',
-      status: 'active',
+      status: 'approved',
       currentLevel: 1,
       requirementsCompleted: [],
       examScores: [],
@@ -88,6 +89,7 @@ export const createNewAdmin = async (
 
     return { success: true, message: `Admin account for ${email} created successfully!` }
   } catch (error: any) {
+    // Don't expose Firebase error details to users
     if (error.code === 'auth/email-already-in-use') {
       return { success: false, message: `Account with ${email} already exists.` }
     }
@@ -97,6 +99,6 @@ export const createNewAdmin = async (
     if (error.code === 'auth/invalid-email') {
       return { success: false, message: 'Invalid email address.' }
     }
-    return { success: false, message: error.message || 'Failed to create admin account' }
+    return { success: false, message: 'Failed to create admin account. Please check your inputs and try again.' }
   }
 }

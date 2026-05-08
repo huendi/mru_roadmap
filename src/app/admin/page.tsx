@@ -16,217 +16,43 @@ const formatDate = (date: any): string => {
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-const REJECTION_REASONS = [
-  'Wrong certificate (not Sun Life)',
-  "Name on certificate doesn't match profile",
-  'Certificate appears edited or tampered',
-  'Incomplete certificate (cut off or missing details)',
-  'Certificate is blurry or unreadable',
-]
-
-// ── Certificate Review Modal ──────────────────────────────────────────────────
-interface CertModalProps {
-  user: User & { certDoc?: any }
-  onClose: () => void
-  onApprove: (uid: string) => Promise<void>
-  onReject: (uid: string, reason: string) => Promise<void>
+// Calculate weekly registrations for the past 4 weeks
+const getWeeklyRegistrations = (users: User[]) => {
+  const weeks = []
+  const today = new Date()
+  
+  for (let i = 0; i < 4; i++) {
+    const weekStart = new Date(today)
+    weekStart.setDate(today.getDate() - (i * 7) - (today.getDay() === 0 ? 6 : today.getDay() - 1))
+    weekStart.setHours(0, 0, 0, 0)
+    
+    const weekEnd = new Date(weekStart)
+    weekEnd.setDate(weekStart.getDate() + 6)
+    weekEnd.setHours(23, 59, 59, 999)
+    
+    const weekUsers = users.filter(user => {
+      let createdAt: Date
+      if (typeof user.createdAt === 'string') {
+        createdAt = new Date(user.createdAt)
+      } else if ('toDate' in user.createdAt && typeof user.createdAt.toDate === 'function') {
+        createdAt = user.createdAt.toDate()
+      } else {
+        createdAt = user.createdAt as Date
+      }
+      
+      return createdAt >= weekStart && createdAt <= weekEnd
+    })
+    
+    weeks.push({
+      dateFrom: weekStart,
+      dateTo: weekEnd,
+      count: weekUsers.length
+    })
+  }
+  
+  return weeks
 }
 
-function CertReviewModal({ user, onClose, onApprove, onReject }: CertModalProps) {
-  const [selectedReason, setSelectedReason] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [action, setAction] = useState<'approve' | 'reject' | null>(null)
-
-  const certUrl = user.certDoc?.url || ''
-  const isPdf =
-    certUrl.toLowerCase().includes('.pdf') ||
-    (user.certDoc?.fileName || '').toLowerCase().endsWith('.pdf')
-
-  const handleApprove = async () => {
-    setAction('approve')
-    setLoading(true)
-    await onApprove(user.uid)
-    setLoading(false)
-    onClose()
-  }
-
-  const handleReject = async () => {
-    if (!selectedReason) return
-    setAction('reject')
-    setLoading(true)
-    await onReject(user.uid, selectedReason)
-    setLoading(false)
-    onClose()
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-      onClick={onClose}
-    >
-      <div
-        className="relative w-full max-w-2xl bg-white rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
-          <div>
-            <p className="text-xs text-gray-400 font-semibold uppercase tracking-widest">
-              Level 2 · Certificate Review
-            </p>
-            <p className="text-sm font-bold text-gray-900 mt-0.5">
-              {user.lastName}
-              {user.firstName ? `, ${user.firstName}` : ''}
-              {user.middleName ? ` ${user.middleName}` : ''}
-            </p>
-            <p className="text-xs text-gray-400">{user.email}</p>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-800 transition-colors"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Certificate preview */}
-        <div className="flex-1 overflow-y-auto">
-          <div
-            className="bg-gray-50 border-b border-gray-100 flex items-center justify-center"
-            style={{ minHeight: 280 }}
-          >
-            {!certUrl ? (
-              <div className="text-center py-16">
-                <p className="text-4xl mb-2">📄</p>
-                <p className="text-sm text-gray-400">No certificate file found</p>
-              </div>
-            ) : isPdf ? (
-              <div className="w-full h-80">
-                <iframe src={certUrl} className="w-full h-full" title="Certificate PDF" />
-              </div>
-            ) : (
-              <img
-                src={certUrl}
-                alt="Certificate"
-                className="max-w-full max-h-80 object-contain p-4"
-              />
-            )}
-          </div>
-
-          {certUrl && (
-            <div className="px-6 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-              <span className="text-xs text-gray-400 font-mono truncate flex-1 mr-3">
-                {user.certDoc?.fileName || 'certificate'}
-              </span>
-              <a
-                href={certUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex-shrink-0 flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-semibold"
-              >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                  />
-                </svg>
-                Open full view
-              </a>
-            </div>
-          )}
-
-          {/* Actions */}
-          <div className="px-6 py-5">
-            <button
-              onClick={handleApprove}
-              disabled={loading}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-green-300 text-white font-bold rounded-xl transition-colors text-sm mb-4"
-            >
-              {loading && action === 'approve' ? (
-                <>
-                  <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                  </svg>
-                  Approving...
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                  </svg>
-                  Approve Certificate
-                </>
-              )}
-            </button>
-
-            <div className="flex items-center gap-3 mb-4">
-              <div className="flex-1 h-px bg-gray-200" />
-              <span className="text-xs text-gray-400 font-medium">or reject with reason</span>
-              <div className="flex-1 h-px bg-gray-200" />
-            </div>
-
-            <div className="space-y-2 mb-4">
-              {REJECTION_REASONS.map((reason) => (
-                <button
-                  key={reason}
-                  onClick={() => setSelectedReason(reason === selectedReason ? '' : reason)}
-                  className={`w-full text-left px-4 py-2.5 rounded-xl border text-sm transition-all ${
-                    selectedReason === reason
-                      ? 'border-red-400 bg-red-50 text-red-800 font-semibold'
-                      : 'border-gray-200 bg-white text-gray-600 hover:border-red-200 hover:bg-red-50/50'
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <span
-                      className={`w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
-                        selectedReason === reason ? 'border-red-500 bg-red-500' : 'border-gray-300'
-                      }`}
-                    >
-                      {selectedReason === reason && (
-                        <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 12 12">
-                          <circle cx="6" cy="6" r="3" />
-                        </svg>
-                      )}
-                    </span>
-                    {reason}
-                  </span>
-                </button>
-              ))}
-            </div>
-
-            <button
-              onClick={handleReject}
-              disabled={!selectedReason || loading}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-700 disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold rounded-xl transition-colors text-sm"
-            >
-              {loading && action === 'reject' ? (
-                <>
-                  <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                  </svg>
-                  Rejecting...
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                  {selectedReason ? 'Reject Certificate' : 'Select a reason to reject'}
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ── Reject Confirmation Modal ─────────────────────────────────────────────────
 interface RejectConfirmModalProps {
@@ -310,11 +136,9 @@ const POLL_INTERVAL = 10_000 // 10 seconds
 export default function AdminOverviewPage() {
   const router = useRouter()
   const [users, setUsers] = useState<User[]>([])
-  const [usersWithCerts, setUsersWithCerts] = useState<(User & { certDoc?: any })[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [certModalUser, setCertModalUser] = useState<(User & { certDoc?: any }) | null>(null)
   const [rejectConfirmUid, setRejectConfirmUid] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [polling, setPolling] = useState(false)
@@ -327,21 +151,6 @@ export default function AdminOverviewPage() {
     try {
       const allUsers = await getAllUsers()
       setUsers(allUsers)
-
-      const withCerts = await Promise.all(
-        allUsers.map(async (u) => {
-          try {
-            const res = await fetch(`/api/user/documents?uid=${u.uid}`)
-            if (!res.ok) return u
-            const docs = await res.json()
-            const certDoc = docs.find((d: any) => d.level === 2 && d.type === 'certificate')
-            return { ...u, certDoc }
-          } catch {
-            return u
-          }
-        })
-      )
-      setUsersWithCerts(withCerts)
       setLastUpdated(new Date())
 
       const pending = allUsers.filter((u) => u.status === 'pending').length
@@ -381,63 +190,7 @@ export default function AdminOverviewPage() {
     }
   }
 
-  // ── Level 2 cert approval ─────────────────────────────────────────────────
-  const handleCertApprove = async (uid: string) => {
-    try {
-      const getRes = await fetch(`/api/user/documents?uid=${uid}`)
-      const allDocs: any[] = getRes.ok ? await getRes.json() : []
-      const updatedDocs = allDocs.map((d: any) =>
-        d.level === 2 && d.type === 'certificate'
-          ? { ...d, status: 'approved', approvedAt: new Date().toISOString() }
-          : d
-      )
-      await fetch('/api/user/documents', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid, documents: updatedDocs }),
-      })
-      setUsersWithCerts((prev) =>
-        prev.map((u) =>
-          u.uid === uid ? { ...u, certDoc: { ...u.certDoc, status: 'approved' } } : u
-        )
-      )
-      setSuccess('Certificate approved successfully!')
-      setTimeout(() => setSuccess(''), 3000)
-    } catch (e: any) {
-      setError('Failed to approve: ' + e.message)
-      setTimeout(() => setError(''), 3000)
-    }
-  }
-
-  const handleCertReject = async (uid: string, reason: string) => {
-    try {
-      const getRes = await fetch(`/api/user/documents?uid=${uid}`)
-      const allDocs: any[] = getRes.ok ? await getRes.json() : []
-      const updatedDocs = allDocs.map((d: any) =>
-        d.level === 2 && d.type === 'certificate'
-          ? { ...d, status: 'rejected', rejectionReason: reason, rejectedAt: new Date().toISOString() }
-          : d
-      )
-      await fetch('/api/user/documents', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid, documents: updatedDocs }),
-      })
-      setUsersWithCerts((prev) =>
-        prev.map((u) =>
-          u.uid === uid
-            ? { ...u, certDoc: { ...u.certDoc, status: 'rejected', rejectionReason: reason } }
-            : u
-        )
-      )
-      setSuccess('Certificate rejected and user notified.')
-      setTimeout(() => setSuccess(''), 3000)
-    } catch (e: any) {
-      setError('Failed to reject: ' + e.message)
-      setTimeout(() => setError(''), 3000)
-    }
-  }
-
+  
   // ── Derived lists ─────────────────────────────────────────────────────────
   const nonAdminUsers    = users.filter((u) => u.role !== 'admin')
   const adminUsers       = users.filter((u) => u.role === 'admin')
@@ -445,29 +198,13 @@ export default function AdminOverviewPage() {
   const activeUsers      = users.filter((u) => u.status === 'active')
   const activeAdmins     = activeUsers.filter((u) => u.role === 'admin')
   const activeRegular    = activeUsers.filter((u) => u.role !== 'admin')
-  const pendingCertUsers = usersWithCerts.filter(
-    (u) =>
-      u.certDoc?.status === 'pending' &&
-      u.certDoc?.type === 'certificate' &&
-      u.certDoc?.level === 2
-  )
 
   const rejectConfirmUser = rejectConfirmUid
     ? users.find((u) => u.uid === rejectConfirmUid) ?? null
     : null
 
   return (
-    <div className="h-screen overflow-hidden bg-black-100">
-
-      {/* Certificate review modal */}
-      {certModalUser && (
-        <CertReviewModal
-          user={certModalUser}
-          onClose={() => setCertModalUser(null)}
-          onApprove={handleCertApprove}
-          onReject={handleCertReject}
-        />
-      )}
+    <div className="flex flex-col h-full overflow-hidden bg-black-100">
 
       {/* Reject confirmation modal */}
       {rejectConfirmUser && (
@@ -549,122 +286,63 @@ export default function AdminOverviewPage() {
               </div>
             </div>
 
-            {/* ── Level 2 Certificate Approvals ── */}
-            <div className="bg-white rounded-xl shadow-lg border border-black-200 overflow-hidden flex-shrink-0">
-              <div className="px-5 py-4 bg-blue-50 border-b border-blue-200 flex items-center justify-between">
-                <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse inline-block" />
-                  Level 2 Certificates
-                </h3>
-                <span
-                  className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                    pendingCertUsers.length > 0 ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-500'
-                  }`}
-                >
-                  {pendingCertUsers.length}
-                </span>
+            {/* Weekly Registrations */}
+            <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 border border-black-200 flex-shrink-0">
+              <h3 className="text-sm font-bold text-black-900 mb-3">Weekly Registrations</h3>
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2 text-xs font-semibold text-black-400 uppercase tracking-wider pb-2 border-b border-black-100">
+                  <p>Date Range</p>
+                  <p className="text-right">Users Registered</p>
+                </div>
+                {getWeeklyRegistrations(users).map((week, index) => (
+                  <div key={index} className="grid grid-cols-2 gap-2 text-xs">
+                    <p className="text-black-600">
+                      {formatDate(week.dateFrom)} - {formatDate(week.dateTo)}
+                    </p>
+                    <p className="text-black-900 font-semibold text-right">{week.count}</p>
+                  </div>
+                ))}
               </div>
-
-              {loading ? (
-                <div className="py-10 flex items-center justify-center">
-                  <svg className="animate-spin w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                  </svg>
-                </div>
-              ) : pendingCertUsers.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-10 text-gray-400">
-                  <p className="text-3xl mb-2">📋</p>
-                  <p className="text-sm font-medium">No pending certificates</p>
-                  <p className="text-xs mt-1">All submissions have been reviewed</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-gray-100">
-                  {pendingCertUsers.map((u, idx) => (
-                    <div
-                      key={u.uid}
-                      className="flex items-center gap-3 px-5 py-3 hover:bg-blue-50/40 transition-colors"
-                    >
-                      <p className="text-xs font-semibold text-gray-400 w-5 flex-shrink-0">{idx + 1}</p>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-900 truncate">
-                          {u.lastName}
-                          {u.firstName ? `, ${u.firstName}` : ''}
-                        </p>
-                        <p className="text-xs text-gray-400 truncate">{u.email}</p>
-                      </div>
-                      <div className="hidden sm:block flex-shrink-0">
-                        <p className="text-xs text-gray-400 whitespace-nowrap">
-                          {u.certDoc?.uploadedAt ? formatDate(u.certDoc.uploadedAt) : '—'}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => setCertModalUser(u)}
-                        className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors"
-                      >
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                          />
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                          />
-                        </svg>
-                        Review
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
 
-          </div>{/* end left */}
-
-          {/* ══ RIGHT 60% — Pending Account Approvals ══ */}
+          </div>
+          {/* ══ RIGHT 60% — Users Status ══ */}
           <div className="w-full lg:w-[60%] flex flex-col min-h-0 flex-1">
             <div className="bg-white rounded-xl shadow-lg border border-black-200 overflow-hidden flex flex-col h-full">
-
               {/* Header */}
-              <div className="px-5 py-4 bg-yellow-50 border-b border-yellow-200 flex items-center justify-between flex-shrink-0">
+              <div className="px-5 py-4 bg-green-50 border-b border-green-200 flex items-center justify-between flex-shrink-0">
                 <h2 className="text-sm font-bold text-black-900 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse inline-block" />
-                  Pending Approvals
+                  <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+                  Users Status
                 </h2>
-                <span className="bg-yellow-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                  {pendingUsers.length}
+                <span className="bg-green-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                  {nonAdminUsers.length}
                 </span>
               </div>
 
               {/* Column headers */}
-              {pendingUsers.length > 0 && (
-                <div className="grid grid-cols-[32px_1fr_auto] sm:grid-cols-[32px_2fr_1.5fr_1fr_auto] gap-2 px-5 py-2.5 bg-black-50 border-b border-black-100 flex-shrink-0">
-                  <p className="text-xs font-semibold text-black-400 uppercase tracking-wider text-left">#</p>
-                  <p className="text-xs font-semibold text-black-400 uppercase tracking-wider text-left">Name</p>
-                  <p className="text-xs font-semibold text-black-400 uppercase tracking-wider hidden sm:block text-left">Email</p>
-                  <p className="text-xs font-semibold text-black-400 uppercase tracking-wider hidden sm:block text-left">Joined</p>
-                  <p className="text-xs font-semibold text-black-400 uppercase tracking-wider text-left">Action</p>
-                </div>
-              )}
+              <div className="grid grid-cols-[32px_1fr_auto] sm:grid-cols-[32px_2fr_1fr_auto] gap-2 px-5 py-2.5 bg-black-50 border-b border-black-100 flex-shrink-0">
+                <p className="text-xs font-semibold text-black-400 uppercase tracking-wider text-left">#</p>
+                <p className="text-xs font-semibold text-black-400 uppercase tracking-wider text-left">Name</p>
+                <p className="text-xs font-semibold text-black-400 uppercase tracking-wider hidden sm:block text-left">Email</p>
+                <p className="text-xs font-semibold text-black-400 uppercase tracking-wider text-left">Level</p>
+              </div>
 
-              {/* Rows */}
+              {/* Rows - Users sorted by highest level */}
               <div className="overflow-y-auto flex-1">
-                {pendingUsers.length === 0 ? (
+                {nonAdminUsers.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full py-20 text-black-400">
-                    <p className="text-4xl mb-3">✅</p>
-                    <p className="text-sm font-medium">No pending approvals</p>
-                    <p className="text-xs mt-1">All users have been reviewed</p>
+                    <p className="text-4xl mb-3">👥</p>
+                    <p className="text-sm font-medium">No users found</p>
+                    <p className="text-xs mt-1">Start by adding users to the platform</p>
                   </div>
                 ) : (
-                  pendingUsers.map((u, idx) => (
+                  nonAdminUsers
+                    .sort((a, b) => (b.currentLevel || 0) - (a.currentLevel || 0))
+                    .map((u, idx) => (
                     <div
                       key={u.uid}
-                      className="grid grid-cols-[32px_1fr_auto] sm:grid-cols-[32px_2fr_1.5fr_1fr_auto] gap-2 items-center px-5 py-3 hover:bg-yellow-50/40 transition-colors border-b border-black-100 last:border-b-0"
+                      className="grid grid-cols-[32px_1fr_auto] sm:grid-cols-[32px_2fr_1fr_auto] gap-2 items-center px-5 py-3 hover:bg-green-50/40 transition-colors border-b border-black-100 last:border-b-0"
                     >
                       <p className="text-xs font-semibold text-black-400 text-left">{idx + 1}</p>
 
@@ -672,7 +350,11 @@ export default function AdminOverviewPage() {
                         <p className="text-sm font-semibold text-black-900 truncate">
                           {u.lastName || '—'}
                           {u.firstName ? `, ${u.firstName}` : ''}
-                          {u.middleName ? ` ${u.middleName}` : ''}
+                          {u.advisorType && (
+                            <span className="ml-1 text-xs font-normal text-gray-500">
+                              ({u.advisorType === 'returnee' ? 'Returnee' : 'New'})
+                            </span>
+                          )}
                         </p>
                         <p className="text-xs text-black-400 truncate sm:hidden">{u.email}</p>
                       </div>
@@ -681,26 +363,19 @@ export default function AdminOverviewPage() {
                         <p className="text-xs text-black-500 truncate">{u.email}</p>
                       </div>
 
-                      <div className="hidden sm:block text-left">
-                        <p className="text-xs text-black-400 whitespace-nowrap">{formatDate(u.createdAt)}</p>
-                      </div>
-
-                      {/* ── Action buttons: Approved / Rejected ── */}
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <button
-                          onClick={() => handleStatusChange(u.uid, 'active')}
-                          title="Approve this user"
-                          className="py-1.5 px-3 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 text-xs font-bold transition-colors whitespace-nowrap"
-                        >
-                          Approved
-                        </button>
-                        <button
-                          onClick={() => setRejectConfirmUid(u.uid)}
-                          title="Reject this user"
-                          className="py-1.5 px-3 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 text-xs font-bold transition-colors whitespace-nowrap"
-                        >
-                          Rejected
-                        </button>
+                      <div className="text-left">
+                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold ${
+                          u.currentLevel === 7 ? 'bg-purple-100 text-purple-800' :
+                          u.currentLevel === 6 ? 'bg-indigo-100 text-indigo-800' :
+                          u.currentLevel === 5 ? 'bg-blue-100 text-blue-800' :
+                          u.currentLevel === 4 ? 'bg-green-100 text-green-800' :
+                          u.currentLevel === 3 ? 'bg-yellow-100 text-yellow-800' :
+                          u.currentLevel === 2 ? 'bg-orange-100 text-orange-800' :
+                          u.currentLevel === 1 ? 'bg-red-100 text-red-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          Level {u.currentLevel || 0}
+                        </span>
                       </div>
                     </div>
                   ))

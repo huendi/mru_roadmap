@@ -74,6 +74,19 @@ export interface ExamQuestion {
   explanation?: string
 }
 
+export interface Level4ExamAttempt {
+  id: string
+  examId: string
+  setNumber?: number
+  score: number
+  correctAnswers: number
+  totalQuestions: number
+  passed: boolean
+  dateTaken: string
+  bankVersion?: string
+  durationMinutes?: number | null
+}
+
 export interface Exam {
   id: string
   level: number
@@ -81,4 +94,48 @@ export interface Exam {
   questions: ExamQuestion[]
   passingScore: number
   timeLimit?: number
+}
+
+export interface AdminLog {
+  id: string
+  actorName: string        // Admin Name who performed the action
+  targetUserName: string   // User Name who was affected
+  activity: string         // What was done (Account Approval Request, Level 2 Certificate Request, etc.)
+  action: string           // Outcome (Approved, Rejected, Passed, Failed, Deleted, Disabled)
+  timestamp: Date          // When it happened
+  targetUserEmail?: string // Optional: target user's email for reference
+}
+
+// Extended user types for admin approval pages
+export interface UserWithCertDoc extends User {
+  certDoc?: {
+    url?: string
+    fileName?: string
+    status?: 'pending' | 'approved' | 'rejected'
+    type?: string
+    level?: number
+    uploadedAt?: string | Date
+    approvedAt?: string
+    rejectedAt?: string
+    rejectionReason?: string
+  }
+}
+
+export interface UserWithExamSubmission extends User {
+  examSubmission?: {
+    examType?: 'ic' | 'iiap'
+    iiapMode?: 'face-to-face' | 'online'
+    icMode?: string
+    scheduleId?: string
+    scheduleDate?: string | Date
+    receiptUrl?: string
+    receiptFileName?: string
+    currentStep?: number
+    adminDecision?: 'passed' | 'failed' | 'pending'
+    status?: 'passed' | 'failed' | 'pending'  // Alternative status field
+    adminNotes?: string
+    submittedAt?: string | Date
+    reviewedAt?: string
+    selectedExams?: string[]  // Array of selected exam names
+  }
 }

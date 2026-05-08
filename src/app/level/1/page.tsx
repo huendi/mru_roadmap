@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { onAuthStateChange } from '@/lib/auth'
+import { authenticatedFetch } from '@/lib/api'
 import { User } from '@/types'
 import { uploadMultipleToCloudinary } from '@/lib/cloudinary'
 import Navbar from '@/components/Navbar'
@@ -88,9 +89,19 @@ export default function Level1Page() {
   const totalDocs = requirements.length
 
   const isIntroRead = introChecked
+  
+  // Check if all required documents are uploaded
+  const requiredDocs = requirements.filter(req => req.required)
+  const requiredDocsUploaded = requiredDocs.every(req => 
+    uploadedDocuments.some(doc => doc.type === req.type)
+  )
+  
+  // Check total documents count for minimum requirement
   const isDocumentsUploaded = uploadedDocuments.length >= minDocsToPass
-  const canProceedToNext = introChecked && uploadedDocuments.length >= minDocsToPass
-  const levelComplete = isIntroRead && uploadedDocuments.length >= minDocsToPass
+  
+  // Can proceed only if intro is read AND all required docs are uploaded AND minimum count is met
+  const canProceedToNext = isIntroRead && requiredDocsUploaded && isDocumentsUploaded
+  const levelComplete = isIntroRead && requiredDocsUploaded && isDocumentsUploaded
   const progressPercentage = Math.round(
     (Math.min(uploadedDocuments.length, totalDocs) / totalDocs) * 100
   )
@@ -187,15 +198,28 @@ export default function Level1Page() {
 
   const loadUploadedDocuments = async (userData: User) => {
     try {
-      const response = await fetch(`/api/user/documents?uid=${userData.uid}`)
+      const response = await authenticatedFetch('/api/user/documents')
       if (response.ok) {
         const allDocuments = await response.json()
-        setUploadedDocuments(allDocuments.filter((doc: any) => doc.level === 1))
+        // Handle case where documents might be null or undefined
+        const documents = Array.isArray(allDocuments) ? allDocuments : []
+        setUploadedDocuments(documents.filter((doc: any) => doc.level === 1))
       } else {
-        setError('Failed to load documents. Please refresh the page.')
+        // For returnee advisors, don't show error for missing documents - just treat as empty
+        if (userData.advisorType === 'returnee') {
+          console.log('Returnee advisor: treating missing documents as empty')
+          setUploadedDocuments([])
+        } else {
+          setError('Failed to load documents. Please refresh the page.')
+        }
       }
     } catch (error) {
       console.error('Failed to load documents:', error)
+      // For returnee advisors, handle errors gracefully
+      if (userData.advisorType === 'returnee') {
+        console.log('Returnee advisor: handling document loading error gracefully')
+        setUploadedDocuments([])
+      }
     }
   }
 
@@ -260,7 +284,7 @@ export default function Level1Page() {
       if (introChecked) await markRequirementComplete('read_intro')
 
       // Sync deletions to DB
-      const res = await fetch(`/api/user/documents?uid=${user.uid}`)
+      const res = await authenticatedFetch('/api/user/documents')
       if (res.ok) {
         const dbDocs = await res.json()
         for (const dbDoc of dbDocs.filter((d: any) => d.level === 1)) {
@@ -449,7 +473,10 @@ export default function Level1Page() {
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                   <h4 className="text-xs font-semibold text-blue-900 mb-1">Getting Started</h4>
                   <p className="text-xs text-blue-800">
-                    Check the box below and upload {minDocsToPass}/{totalDocs} documents ({Math.round((minDocsToPass / totalDocs) * 100)}%) to proceed to the next level.
+                    {requiredDocs.length > 0 
+                      ? `Check the box below and upload all ${requiredDocs.length} required document${requiredDocs.length !== 1 ? 's' : ''} (minimum ${minDocsToPass}/${totalDocs} total) to proceed to the next level.`
+                      : `Check the box below and upload ${minDocsToPass}/{totalDocs} documents (${Math.round((minDocsToPass / totalDocs) * 100)}%) to proceed to the next level.`
+                    }
                   </p>
                 </div>
                 <div className="bg-red-50 border border-red-200 rounded-lg p-3">
@@ -518,7 +545,20 @@ export default function Level1Page() {
                   <span className={`text-sm font-medium ${canProceedToNext ? 'text-green-600' : 'text-orange-600'}`}>
                     {canProceedToNext
                       ? '✓ Ready'
-                      : `${Math.max(0, minDocsToPass - uploadedDocuments.length)} more document${Math.max(0, minDocsToPass - uploadedDocuments.length) !== 1 ? 's' : ''} needed (min ${minDocsToPass} of ${totalDocs})`
+                      : (() => {
+                          const missingRequired = requiredDocs.filter(req => 
+                            !uploadedDocuments.some(doc => doc.type === req.type)
+                          )
+                          const missingTotal = Math.max(0, minDocsToPass - uploadedDocuments.length)
+                          
+                          if (missingRequired.length > 0) {
+                            return `${missingRequired.length} required doc${missingRequired.length !== 1 ? 's' : ''} missing`
+                          } else if (missingTotal > 0) {
+                            return `${missingTotal} more doc${missingTotal !== 1 ? 's' : ''} needed (min ${minDocsToPass})`
+                          } else {
+                            return 'Read introduction to proceed'
+                          }
+                        })()
                     }
                   </span>
                 </div>

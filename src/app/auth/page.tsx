@@ -99,10 +99,15 @@ export default function AuthPage() {
       setSuccess('Login successful! Redirecting...')
       // Redirect is handled by useEffect
     } catch (error: any) {
-      if (error.code === 'auth/invalid-credential') {
-        setError('Your account is disabled, please contact your manager.')
+      // Use user-friendly messages instead of Firebase error codes
+      if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+        setError('Incorrect email or password. Please try again.')
+      } else if (error.code === 'auth/too-many-requests') {
+        setError('Too many failed attempts. Please try again later.')
+      } else if (error.code === 'auth/user-disabled') {
+        setError('Your account has been disabled. Please contact your manager.')
       } else {
-        setError(error.message || 'Login failed')
+        setError('Login failed. Please try again.')
       }
     } finally {
       setLoading(false)
@@ -184,7 +189,16 @@ export default function AuthPage() {
       
     } catch (error: any) {
       console.error('Google Sign-In error:', error)
-      setError(error.message || 'Failed to sign in with Google')
+      // Use user-friendly messages instead of Firebase error codes
+      if (error.code === 'auth/popup-closed-by-user') {
+        setError('Sign-in was cancelled. Please try again.')
+      } else if (error.code === 'auth/popup-blocked') {
+        setError('Pop-up was blocked. Please allow pop-ups and try again.')
+      } else if (error.code === 'auth/cancelled-popup-request') {
+        setError('Sign-in was cancelled. Please try again.')
+      } else {
+        setError('Failed to sign in with Google. Please try again.')
+      }
     } finally {
       setLoading(false)
     }

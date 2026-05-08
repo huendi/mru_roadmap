@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { adminDb } from '@/lib/firebase-admin'
+import { createAdminLog } from '@/lib/admin-logs'
 
 const SETTINGS_DOC = adminDb.collection('settings').doc('level2')
 
@@ -43,11 +44,12 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
+    const { trainingUrl, trainingTitle, trainingDescription, instructionSlides, adminEmail } = body
 
     if (
-      typeof body.trainingUrl !== 'string' ||
-      typeof body.trainingTitle !== 'string' ||
-      !Array.isArray(body.instructionSlides)
+      typeof trainingUrl !== 'string' ||
+      typeof trainingTitle !== 'string' ||
+      !Array.isArray(instructionSlides)
     ) {
       return NextResponse.json(
         { error: 'Invalid settings format.' },
@@ -56,12 +58,20 @@ export async function POST(req: NextRequest) {
     }
 
     await SETTINGS_DOC.set({
-      trainingUrl:         body.trainingUrl,
-      trainingTitle:       body.trainingTitle,
-      trainingDescription: body.trainingDescription ?? '',
-      instructionSlides:   body.instructionSlides,
-      updatedAt:           new Date().toISOString(),
+      trainingUrl,
+      trainingTitle,
+      trainingDescription: trainingDescription ?? '',
+      instructionSlides,
+      updatedAt: new Date().toISOString(),
     })
+
+    // Log the admin action
+    await createAdminLog(
+      adminEmail || 'Admin',
+      'System Settings',
+      'Settings Update',
+      'Updated Level 2 settings'
+    )
 
     return NextResponse.json({ success: true, message: 'Settings saved successfully.' })
 

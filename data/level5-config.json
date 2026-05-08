@@ -1,0 +1,95 @@
+{
+  "examTypes": {
+    "ic": {
+      "trad": {
+        "faceToFacePrice": 1010,
+        "onlinePrice": 1010
+      },
+      "vul": {
+        "faceToFacePrice": 1010,
+        "onlinePrice": 1010
+      },
+      "enabled": true
+    },
+    "iiap": {
+      "trad": {
+        "faceToFacePrice": 1000,
+        "onlinePrice": 1015
+      },
+      "vul": {
+        "faceToFacePrice": 1000,
+        "onlinePrice": 1015
+      },
+      "enabled": true
+    }
+  },
+  "schedules": [
+    {
+      "id": "1777872649424",
+      "examType": "iiap",
+      "iiapMode": "face-to-face",
+      "date": "2026-05-16",
+      "time": "07:30",
+      "location": "Manila",
+      "maxSlots": 50,
+      "currentSlots": 0,
+      "status": "active"
+    },
+    {
+      "id": "1777873976535",
+      "examType": "iiap",
+      "examSubType": "trad",
+      "mode": "face-to-face",
+      "date": "2026-05-30",
+      "time": "07:52",
+      "location": "Manila",
+      "maxSlots": 50,
+      "currentSlots": 0,
+      "status": "active"
+    },
+    {
+      "id": "1777874276887",
+      "examType": "iiap",
+      "mode": "trad-face-to-face",
+      "date": "2026-05-08",
+      "time": "06:00",
+      "location": "Manila",
+      "maxSlots": 50,
+      "currentSlots": 0,
+      "status": "active"
+    },
+    {
+      "id": "1777874296278",
+      "examType": "iiap",
+      "mode": "trad-online",
+      "date": "2026-05-30",
+      "time": "08:00",
+      "location": "Manila",
+      "maxSlots": 50,
+      "currentSlots": 0,
+      "status": "active"
+    },
+    {
+      "id": "1777874316190",
+      "examType": "iiap",
+      "mode": "vul-face-to-face",
+      "date": "2026-05-09",
+      "time": "08:00",
+      "location": "Laguna",
+      "maxSlots": 50,
+      "currentSlots": 0,
+      "status": "active"
+    },
+    {
+      "id": "1777874330687",
+      "examType": "ic",
+      "mode": "vul-online",
+      "date": "2026-05-18",
+      "time": "07:00",
+      "location": "Zoom",
+      "maxSlots": 50,
+      "currentSlots": 0,
+      "status": "active"
+    }
+  ]
+}

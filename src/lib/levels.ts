@@ -138,7 +138,36 @@ export const LEVEL_REQUIREMENTS: { [key: number]: Requirement[] } = {
       isCompleted: false,
     },
   ],
-  5: [],
+  5: [
+    {
+      id: 'exam_type_selected',
+      title: 'Select Exam Type',
+      description: 'Choose IC or IIAP exam type and payment option',
+      type: 'checkbox',
+      isCompleted: false,
+    },
+    {
+      id: 'exam_scheduled',
+      title: 'Schedule Exam',
+      description: 'Select your preferred exam schedule',
+      type: 'checkbox',
+      isCompleted: false,
+    },
+    {
+      id: 'receipt_uploaded',
+      title: 'Upload Payment Receipt',
+      description: 'Upload proof of payment for exam fees',
+      type: 'file',
+      isCompleted: false,
+    },
+    {
+      id: 'exam_approved',
+      title: 'Admin Approval',
+      description: 'Wait for admin approval of exam results',
+      type: 'checkbox',
+      isCompleted: false,
+    },
+  ],
   6: [],
   7: [],
 }
@@ -220,7 +249,8 @@ export const getNextUnlockedLevel = (
   completedRequirements: string[],
   level1DocCount?: number,
   advisorType?: 'new' | 'returnee',
-  minDocsToPass?: number
+  minDocsToPass?: number,
+  level5Progress?: any
 ): number => {
   if (currentLevel >= 7) return 7
 
@@ -249,6 +279,16 @@ export const getNextUnlockedLevel = (
       return currentLevel
     }
     return currentLevel
+  }
+
+  // ✅ Special check for Level 6: require actual Level 5 completion
+  if (currentLevel >= 6) {
+    // Check if Level 5 is actually completed (passed admin decision)
+    const level5Completed = level5Progress?.adminDecision === 'passed'
+    if (!level5Completed) {
+      // If Level 5 is not completed, don't allow access to Level 6
+      return Math.min(5, currentLevel)
+    }
   }
 
   // ✅ Return at least currentLevel — never downgrade what DB already granted
@@ -287,8 +327,8 @@ export const getUnlockedLevels = (
 export const getLevelProgress = (levelId: number, completedRequirements: string[]): number => {
   const requirements = LEVEL_REQUIREMENTS[levelId] || []
   
-  // For levels 5, 6, and 7, show 0% progress until they're properly implemented
-  if (requirements.length === 0 && (levelId === 5 || levelId === 6 || levelId === 7)) return 0
+  // For levels 6 and 7, show 0% progress until they're properly implemented
+  if (requirements.length === 0 && (levelId === 6 || levelId === 7)) return 0
   if (requirements.length === 0) return 100
   
   // Ensure completedRequirements is an array

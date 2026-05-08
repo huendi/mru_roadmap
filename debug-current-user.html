@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Current User</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        .error { color: red; }
+        .success { color: green; }
+        pre { background: #f5f5f5; padding: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>Current User Debug</h1>
+    
+    <div class="section">
+        <button onclick="checkCurrentUser()" style="padding: 10px 20px;">Check Current User State</button>
+    </div>
+    
+    <div id="results"></div>
+    
+    <script>
+        async function checkCurrentUser() {
+            const results = document.getElementById('results');
+            results.innerHTML = '<div class="section">Loading...</div>';
+            
+            try {
+                // Get current user from auth
+                const authRes = await fetch('/api/user/profile');
+                if (!authRes.ok) {
+                    throw new Error('Not authenticated');
+                }
+                
+                const profileData = await authRes.json();
+                const uid = profileData.user?.uid;
+                
+                if (!uid) {
+                    throw new Error('No UID found');
+                }
+                
+                // Now get debug data
+                const debugRes = await fetch(`/api/debug/user-state?uid=${uid}`);
+                const debugData = await debugRes.json();
+                
+                let html = '<div class="section success"><h2>User Debug Data</h2>';
+                html += `<pre>${JSON.stringify(debugData, null, 2)}</pre></div>`;
+                
+                results.innerHTML = html;
+                
+            } catch (error) {
+                results.innerHTML = `<div class="section error"><h2>Error</h2><p>${error.message}</p><pre>${error.stack}</pre></div>`;
+            }
+        }
+    </script>
+</body>
+</html>

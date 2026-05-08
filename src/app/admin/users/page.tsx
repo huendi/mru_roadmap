@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { getAllUsers } from '@/lib/auth'
+import { getAllUsers, updateUserStatus as updateUserStatusAuth, onAuthStateChange } from '@/lib/auth'
 import { User } from '@/types'
 import * as XLSX from 'xlsx'
 import {
@@ -41,10 +41,6 @@ const calculateAge = (birthday?: string): number | string => {
 // Firestore helpers – status / soft-delete / restore / hard-delete
 // ─────────────────────────────────────────────────────────────
 
-/** Persist status change to Firestore */
-async function updateUserStatus(uid: string, status: string) {
-  await setDoc(doc(db, 'users', uid), { status }, { merge: true })
-}
 
 /** Move a user document to the `deletedUsers` collection */
 async function softDeleteUser(user: User, reason: string) {
@@ -61,16 +57,17 @@ async function softDeleteUser(user: User, reason: string) {
 async function restoreUser(user: User) {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { deletedAt, ...rest } = user as any
-  await setDoc(doc(db, 'users', user.uid), rest)
+  // Set status back to 'active' when restoring from recycle bin
+  await setDoc(doc(db, 'users', user.uid), { ...rest, status: 'active' })
   await deleteDoc(doc(db, 'deletedUsers', user.uid))
 }
 
 /** Permanently delete from `deletedUsers` */
-async function hardDeleteUser(uid: string) {
+async function hardDeleteUser(uid: string, adminEmail?: string) {
   const res = await fetch('/api/admin/delete-user', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ uid }),
+    body: JSON.stringify({ uid, adminEmail }),
   })
 
   const contentType = res.headers.get('content-type')
@@ -177,6 +174,115 @@ type StatusFilter = 'all' | 'active' | 'disabled' | 'rejected'
 type Tab = 'users' | 'recycle'
 
 // ─────────────────────────────────────────────────────────────
+// PIN Modal
+// ─────────────────────────────────────────────────────────────
+function PinModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
+  const [pin, setPin] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  // Clear PIN and error when modal opens
+  useEffect(() => {
+    setPin('')
+    setError('')
+  }, [onClose, onSuccess]) // Trigger when modal opens (new callbacks)
+
+  const handleCheck = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch('/api/verify-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin }),
+      })
+      const data = await res.json()
+      if (!data.success) {
+        setError('Wrong PIN. Please try again.')
+        return
+      }
+      onSuccess()
+      onClose()
+    } catch {
+      setError('Something went wrong. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-sm space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+            <svg className="w-5 h-5 text-blue-900" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+          </div>
+          <div>
+            <h2 className="font-bold text-gray-900">PIN Verification</h2>
+            <p className="text-sm text-gray-500 mt-0.5">Enter your PIN to confirm this action</p>
+          </div>
+        </div>
+
+        <input
+          type="password"
+          autoComplete="one-time-code"
+          value={pin}
+          onChange={e => setPin(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleCheck()}
+          onFocus={() => {
+            // Clear PIN on focus to prevent browser autofill
+            if (pin && pin.length > 0) {
+              setPin('')
+            }
+          }}
+          onBlur={() => {
+            // Additional check on blur to clear any unwanted autofill
+            if (pin && pin.length > 0 && /^\*+$/.test(pin)) {
+              setPin('')
+            }
+          }}
+          onInput={(e) => {
+            const target = e.target as HTMLInputElement
+            // Prevent setting to asterisks from browser autofill
+            if (/^\*+$/.test(target.value)) {
+              target.value = ''
+              setPin('')
+            }
+          }}
+          className="w-full border border-gray-200 p-3 text-center text-xl tracking-widest rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
+          placeholder="••••••"
+          autoFocus
+          style={{ WebkitAppearance: 'none', MozAppearance: 'textfield' }}
+        />
+
+        {error && (
+          <p className="text-red-600 text-sm text-center bg-red-50 py-2 rounded-lg">{error}</p>
+        )}
+
+        <div className="flex gap-2">
+          <button
+            onClick={onClose}
+            className="flex-1 border border-gray-200 py-2 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleCheck}
+            disabled={loading || !pin}
+            className="flex-1 bg-blue-900 text-white py-2 rounded-lg text-sm font-semibold hover:bg-blue-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Verifying...' : 'Confirm'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────
 // Modal: generic two-step confirmation
 // ─────────────────────────────────────────────────────────────
 const PRESET_REASONS = [
@@ -280,6 +386,9 @@ function ConfirmModal({
 export default function AdminUsersPage() {
   const router = useRouter()
 
+  // Current admin for logging
+  const [currentAdmin, setCurrentAdmin] = useState<User | null>(null)
+
   // Active users
   const [users, setUsers] = useState<User[]>([])
   const [loadingUsers, setLoadingUsers] = useState(true)
@@ -302,6 +411,33 @@ export default function AdminUsersPage() {
     | { type: 'hard-delete'; user: User }
 
   const [pending, setPending] = useState<PendingAction | null>(null)
+  
+  // Unified pending action — PIN gate for hard-delete
+  const [pendingCallback, setPendingCallback] = useState<(() => void) | null>(null)
+
+  // Track current admin for logging
+  useEffect(() => {
+    const unsub = onAuthStateChange((userData) => {
+      if (userData && userData.role === 'admin') {
+        setCurrentAdmin(userData)
+      }
+    })
+    return unsub
+  }, [])
+
+  // Add this useEffect to handle body scroll lock when modals are open
+  useEffect(() => {
+    if (pending || pendingCallback) {
+      document.body.style.overflow = 'hidden'
+      // Clear search when any modal opens to prevent auto-filling
+      setSearch('')
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [pending, pendingCallback])
 
   // ── Load active users ────────────────────────────────────────
   useEffect(() => {
@@ -310,7 +446,7 @@ export default function AdminUsersPage() {
         const allUsers = await getAllUsers()
         setUsers(allUsers)
       } catch (e: any) {
-        showError('Failed to load users: ' + e.message)
+        console.error('Failed to load users:', e)
       } finally {
         setLoadingUsers(false)
       }
@@ -340,7 +476,7 @@ export default function AdminUsersPage() {
   const handleDisable = async (uid: string, currentStatus: string) => {
     try {
       const newStatus = currentStatus === 'disabled' ? 'active' : 'disabled'
-      await updateUserStatus(uid, newStatus) // ← persist to Firestore
+      await updateUserStatusAuth(uid, newStatus, currentAdmin?.email) // ← persist to Firestore with logging
       setUsers(prev => prev.map(u => u.uid === uid ? { ...u, status: newStatus } : u))
       showSuccess(`User ${newStatus === 'disabled' ? 'disabled' : 're-enabled'} successfully`)
     } catch (e: any) {
@@ -351,6 +487,18 @@ export default function AdminUsersPage() {
   // ── Confirm dispatcher ───────────────────────────────────────
   const handleConfirm = async (reason?: string) => {
     if (!pending) return
+    
+    // For hard-delete, require PIN verification
+    if (pending.type === 'hard-delete') {
+      const action = pending
+      setPending(null)
+      setPendingCallback(() => () => {
+        executeHardDelete(action.user.uid)
+      })
+      return
+    }
+    
+    // For other actions, proceed directly
     try {
       if (pending.type === 'soft-delete') {
         await softDeleteUser(pending.user, reason || 'No reason provided')
@@ -363,16 +511,39 @@ export default function AdminUsersPage() {
         } as any])
         showSuccess('User moved to Recycle Bin')
 
+        // Log the soft-delete action
+        try {
+          const { createAdminLog } = await import('@/lib/admin-logs')
+          await createAdminLog(
+            currentAdmin?.displayName || currentAdmin?.email || 'Admin',
+            pending.user.displayName || pending.user.name || pending.user.email || 'Unknown User',
+            'User Account Management',
+            'Moved to Recycle Bin',
+            pending.user.email || undefined
+          )
+        } catch (logError) {
+          console.warn('Failed to create admin log for soft delete:', logError)
+        }
+
       } else if (pending.type === 'restore') {
         await restoreUser(pending.user)
         setDeletedUsers(prev => prev.filter(u => u.uid !== pending.user.uid))
-        setUsers(prev => [...prev, pending.user])
+        setUsers(prev => [...prev, { ...pending.user, status: 'active' }])
         showSuccess('User restored successfully')
 
-      } else if (pending.type === 'hard-delete') {
-        await hardDeleteUser(pending.user.uid)
-        setDeletedUsers(prev => prev.filter(u => u.uid !== pending.user.uid))
-        showSuccess('User permanently deleted')
+        // Log the restore action
+        try {
+          const { createAdminLog } = await import('@/lib/admin-logs')
+          await createAdminLog(
+            currentAdmin?.displayName || currentAdmin?.email || 'Admin',
+            pending.user.displayName || pending.user.name || pending.user.email || 'Unknown User',
+            'User Account Management',
+            'Restored from Recycle Bin',
+            pending.user.email || undefined
+          )
+        } catch (logError) {
+          console.warn('Failed to create admin log for restore:', logError)
+        }
       }
     } catch (e: any) {
       showError('Action failed: ' + e.message)
@@ -381,19 +552,76 @@ export default function AdminUsersPage() {
     }
   }
 
+  // ── Execute hard delete after PIN verification ─────────────────────
+  const executeHardDelete = async (uid: string) => {
+    try {
+      await hardDeleteUser(uid, currentAdmin?.email)
+      setDeletedUsers(prev => prev.filter(u => u.uid !== uid))
+      showSuccess('User permanently deleted')
+    } catch (e: any) {
+      showError('Action failed: ' + e.message)
+    }
+  }
+
   // ── Derived lists ────────────────────────────────────────────
   const nonAdminUsers = users.filter(u => u.role !== 'admin' && u.status !== 'pending')
 
+  // Enhanced search function that searches across all user details
+  const searchAcrossAllFields = (user: User, searchTerm: string): boolean => {
+    if (!searchTerm) return true
+    
+    const searchLower = searchTerm.toLowerCase()
+    
+    // Create a searchable string with all user details
+    const searchableFields = [
+      user.lastName || '',
+      user.firstName || '',
+      user.middleName || '',
+      user.name || '',
+      user.email || '',
+      user.displayName || '',
+      user.contact || '',
+      user.birthplace || '',
+      user.houseStreet || '',
+      user.barangay || '',
+      user.municipalityCity || '',
+      user.province || '',
+      user.region || '',
+      user.zipCode || '',
+      user.address || '',
+      user.civilStatus || '',
+      user.educationalAttainment || '',
+      user.currentJob || '',
+      user.gender || '',
+      user.advisorType || '',
+      user.role || '',
+      user.status || '',
+      (user.currentLevel ?? 1).toString(),
+      user.birthday || '',
+      formatDate(user.createdAt),
+      formatDate(user.updatedAt),
+      user.uid || ''
+    ]
+    
+    // Use whole word matching to avoid 'male' matching 'female'
+    return searchableFields.some(field => {
+      const fieldLower = field.toLowerCase()
+      // Create regex for whole word matching with word boundaries
+      const regex = new RegExp(`\\b${searchLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
+      return regex.test(fieldLower)
+    })
+  }
+
   const filteredUsers = nonAdminUsers
     .filter(u => {
-      const matchSearch = !search || `${u.lastName} ${u.firstName} ${u.name} ${u.email}`.toLowerCase().includes(search.toLowerCase())
+      const matchSearch = searchAcrossAllFields(u, search)
       const matchStatus = statusFilter === 'all' || u.status === statusFilter
       return matchSearch && matchStatus
     })
     .sort((a, b) => (a.lastName || a.name || '').localeCompare(b.lastName || b.name || ''))
 
   const filteredBin = deletedUsers
-    .filter(u => !search || `${u.lastName} ${u.firstName} ${u.name} ${u.email}`.toLowerCase().includes(search.toLowerCase()))
+    .filter(u => searchAcrossAllFields(u, search))
     .sort((a, b) => (a.lastName || a.name || '').localeCompare(b.lastName || b.name || ''))
 
   const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
@@ -442,7 +670,7 @@ export default function AdminUsersPage() {
   }
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="flex flex-col h-full overflow-hidden">
 
       {/* Confirmation Modal */}
       {pending && modalConfig && (
@@ -454,251 +682,298 @@ export default function AdminUsersPage() {
         />
       )}
 
+      {/* PIN Modal */}
+      {pendingCallback && (
+        <PinModal
+          onClose={() => setPendingCallback(null)}
+          onSuccess={() => {
+            pendingCallback()
+            setPendingCallback(null)
+          }}
+        />
+      )}
+
       {/* Alerts */}
-      {error   && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>}
-      {success && <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm">{success}</div>}
+      {error   && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex-shrink-0">{error}</div>}
+      {success && <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm flex-shrink-0">{success}</div>}
 
       {/* Header */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h2 className="text-lg font-bold text-gray-900">User Management</h2>
-          <p className="text-sm text-gray-500">{nonAdminUsers.length} users total</p>
+      <div className="px-4 sm:px-6 pt-6 pb-4 flex-shrink-0">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">User Management</h2>
+            <p className="text-sm text-gray-500">{nonAdminUsers.length} users total</p>
+          </div>
+          {activeTab === 'users' && (
+            <button
+              onClick={() => downloadXLSX(nonAdminUsers)}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-semibold hover:bg-blue-800 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Download Excel
+            </button>
+          )}
         </div>
-        {activeTab === 'users' && (
-          <button
-            onClick={() => downloadXLSX(nonAdminUsers)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-semibold hover:bg-blue-800 transition-colors"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-            </svg>
-            Download Excel
-          </button>
-        )}
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
-        <button
-          onClick={() => setActiveTab('users')}
-          className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
-            activeTab === 'users' ? 'bg-white shadow text-blue-900' : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          👥 Users
-        </button>
-        <button
-          onClick={() => setActiveTab('recycle')}
-          className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2 ${
-            activeTab === 'recycle' ? 'bg-white shadow text-orange-700' : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          🗑️ Recycle Bin
-          {deletedUsers.length > 0 && (
-            <span className="bg-orange-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-              {deletedUsers.length}
-            </span>
-          )}
-        </button>
+      <div className="px-4 sm:px-6 flex-shrink-0">
+        <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+              activeTab === 'users' ? 'bg-white shadow text-blue-900' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            👥 Users
+          </button>
+          <button
+            onClick={() => setActiveTab('recycle')}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2 ${
+              activeTab === 'recycle' ? 'bg-white shadow text-orange-700' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            🗑️ Recycle Bin
+            {deletedUsers.length > 0 && (
+              <span className="bg-orange-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                {deletedUsers.length}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Search */}
-      <div className="relative">
-        <svg className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-        <input
-          type="text"
-          placeholder={activeTab === 'users' ? 'Search by name or email...' : 'Search deleted users...'}
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="w-full pl-9 pr-4 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-white"
-        />
+      <div className="px-4 sm:px-6 pt-3 flex-shrink-0">
+        <div className="relative">
+          <svg className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            type="text"
+            placeholder={activeTab === 'users' ? 'Search all user details (name, email, gender, address, job, etc.)...' : 'Search deleted users...'}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            autoComplete="off"           // ← dagdag
+            name="user-search-query" 
+            className="w-full pl-9 pr-4 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-white"
+          />
+        </div>
       </div>
 
       {/* ── USER LIST TAB ── */}
       {activeTab === 'users' && (
         <>
           {/* Status filter pills */}
-          <div className="flex flex-wrap gap-2">
-            {STATUS_FILTERS.map(f => (
-              <button
-                key={f.key}
-                onClick={() => setStatusFilter(f.key)}
-                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors border ${
-                  statusFilter === f.key
-                    ? 'bg-blue-900 text-white border-blue-900'
-                    : 'bg-white text-gray-600 border-gray-200 hover:border-blue-900 hover:text-blue-900'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
+          <div className="px-4 sm:px-6 pt-3 flex-shrink-0">
+            <div className="flex flex-wrap gap-2">
+              {STATUS_FILTERS.map(f => (
+                <button
+                  key={f.key}
+                  onClick={() => setStatusFilter(f.key)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors border ${
+                    statusFilter === f.key
+                      ? 'bg-blue-900 text-white border-blue-900'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-blue-900 hover:text-blue-900'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="bg-white rounded-xl border-2 border-yellow-600 overflow-hidden">
-            <div className="overflow-x-auto" style={{ maxHeight: 'calc(100vh - 360px)', overflowY: 'auto' }}>
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 sticky top-0 z-10">
+          {/* Scrollable content */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 sticky top-0 z-10">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-10">#</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Name</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Email</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell">Joined</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell">Level</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filteredUsers.length === 0 ? (
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-10">#</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Name</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Email</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell">Joined</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell">Level</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-                    <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+                    <td colSpan={7} className="px-4 py-12 text-center text-sm text-gray-400">
+                      {search || statusFilter !== 'all' ? 'No users match your filters.' : 'No users found.'}
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {filteredUsers.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="px-4 py-12 text-center text-sm text-gray-400">
-                        {search || statusFilter !== 'all' ? 'No users match your filters.' : 'No users found.'}
-                      </td>
-                    </tr>
-                  ) : filteredUsers.map((u, idx) => (
-                    <tr
-                      key={u.uid}
-                      // ✅ Gray background highlight for disabled rows
-                      className={`transition-colors cursor-pointer ${
-                        u.status === 'disabled'
-                          ? 'bg-gray-100 hover:bg-gray-200 opacity-70'
-                          : 'hover:bg-yellow-50/40'
-                      }`}
-                      onClick={() => router.push(`/admin/users/${u.uid}`)}
-                    >
-                      <td className="px-4 py-3 text-xs font-semibold text-gray-400 w-10">{idx + 1}</td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <p className={`font-semibold ${u.status === 'disabled' ? 'text-gray-400' : 'text-gray-900'}`}>
-                          {u.lastName || u.name || '—'}
-                        </p>
-                        {u.firstName && (
-                          <p className="text-xs text-gray-400">{u.firstName}</p>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-gray-500 text-xs max-w-[160px] truncate">{u.email}</td>
-                      <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap hidden sm:table-cell">{formatDate(u.createdAt)}</td>
-                      <td className="px-4 py-3 text-gray-600 text-xs hidden sm:table-cell">
-                        <span className="bg-blue-50 text-blue-900 font-semibold px-2 py-0.5 rounded-full text-[11px]">Lvl {u.currentLevel ?? 1}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                          u.status === 'active'   ? 'bg-green-100 text-green-800' :
-                          u.status === 'disabled' ? 'bg-gray-200 text-gray-500' :
-                          u.status === 'rejected' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-600'
-                        }`}>{u.status || 'active'}</span>
-                      </td>
-                      <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={() => router.push(`/admin/users/${u.uid}`)}
-                            className="px-3 py-1.5 rounded-lg bg-blue-900 text-white text-xs font-semibold hover:bg-blue-800 transition-colors"
-                          >
-                            View
-                          </button>
-                          <button
-                            onClick={() => handleDisable(u.uid, u.status || 'active')}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                              u.status === 'disabled'
-                                ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                                : 'bg-gray-200 text-gray-500 hover:bg-gray-300'
-                            }`}
-                          >
-                            {u.status === 'disabled' ? 'Enable' : 'Disable'}
-                          </button>
-                          <button
-                            onClick={() => setPending({ type: 'soft-delete', user: u })}
-                            className="px-3 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 text-xs font-semibold transition-colors"
-                          >
-                            Delete
-                          </button>
+                ) : filteredUsers.map((u, idx) => (
+                  <tr
+                    key={u.uid}
+                    className={`transition-colors cursor-pointer ${
+                      u.status === 'disabled'
+                        ? 'bg-gray-100 hover:bg-gray-200 opacity-70'
+                        : 'hover:bg-yellow-50/40'
+                    }`}
+                    onClick={() => router.push(`/admin/users/${u.uid}`)}
+                  >
+                    <td className="px-4 py-3 text-xs font-semibold text-gray-400 w-10">{idx + 1}</td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <div className="flex items-center gap-2">
+                        <div>
+                          <p className={`font-semibold ${u.status === 'disabled' ? 'text-gray-400' : 'text-gray-900'}`}>
+                            {u.lastName || u.name || '—'}
+                          </p>
+                          {u.firstName && (
+                            <p className="text-xs text-gray-400">{u.firstName}</p>
+                          )}
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                        {u.advisorType && (
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                            u.advisorType === 'new' 
+                              ? 'bg-green-100 text-green-700' 
+                              : 'bg-blue-100 text-blue-700'
+                          }`}>
+                            {u.advisorType === 'new' ? 'New' : 'Returnee'}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 text-xs max-w-[160px] truncate">{u.email}</td>
+                    <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap hidden sm:table-cell">{formatDate(u.createdAt)}</td>
+                    <td className="px-4 py-3 text-gray-600 text-xs hidden sm:table-cell">
+                      <span className="bg-blue-50 text-blue-900 font-semibold px-2 py-0.5 rounded-full text-[11px]">Lvl {u.currentLevel ?? 1}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                        u.status === 'active'   ? 'bg-green-100 text-green-800' :
+                        u.status === 'disabled' ? 'bg-gray-200 text-gray-500' :
+                        u.status === 'rejected' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-600'
+                      }`}>{u.status || 'active'}</span>
+                    </td>
+                    <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => router.push(`/admin/users/${u.uid}`)}
+                          className="px-3 py-1.5 rounded-lg bg-blue-900 text-white text-xs font-semibold hover:bg-blue-800 transition-colors"
+                        >
+                          View
+                        </button>
+                        <button
+                          onClick={() => handleDisable(u.uid, u.status || 'active')}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                            u.status === 'disabled'
+                              ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                              : 'bg-gray-200 text-gray-500 hover:bg-gray-300'
+                          }`}
+                        >
+                          {u.status === 'disabled' ? 'Enable' : 'Disable'}
+                        </button>
+                        <button
+                          onClick={() => setPending({ type: 'soft-delete', user: u })}
+                          className="px-3 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 text-xs font-semibold transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </>
       )}
 
       {/* ── RECYCLE BIN TAB ── */}
       {activeTab === 'recycle' && (
-        <div className="bg-white rounded-xl border-2 border-orange-300 overflow-hidden">
-          {loadingBin ? (
-            <div className="flex items-center justify-center py-16">
-              <div className="text-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-4 border-orange-500 mx-auto mb-3" />
-                <p className="text-sm text-gray-400">Loading recycle bin...</p>
+        <div className="flex-1 overflow-y-auto px-4 sm:px-6 pb-6 min-h-0">
+          <div className="bg-white rounded-xl border-2 border-orange-300 overflow-hidden">
+            {loadingBin ? (
+              <div className="flex items-center justify-center py-16">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-4 border-orange-500 mx-auto mb-3" />
+                  <p className="text-sm text-gray-400">Loading recycle bin...</p>
+                </div>
               </div>
-            </div>
-          ) : (
-            <>
-              {/* Bin header info */}
-              <div className="px-4 py-3 bg-orange-50 border-b border-orange-200 flex items-center gap-2">
-                <svg className="w-4 h-4 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <p className="text-xs text-orange-700 font-medium">
-                  {filteredBin.length} deleted user{filteredBin.length !== 1 ? 's' : ''}. You can restore them or permanently delete.
-                </p>
-              </div>
+            ) : (
+              <>
+                {/* Bin header info */}
+                <div className="px-4 py-3 bg-orange-50 border-b border-orange-200 flex items-center gap-2">
+                  <svg className="w-4 h-4 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <p className="text-xs text-orange-700 font-medium">
+                    {filteredBin.length} deleted user{filteredBin.length !== 1 ? 's' : ''}. You can restore them or permanently delete.
+                  </p>
+                </div>
 
-              <div className="overflow-x-auto" style={{ maxHeight: 'calc(100vh - 360px)', overflowY: 'auto' }}>
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 sticky top-0 z-10">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-10">#</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Name</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Email</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell">Deleted On</th>
-                      <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {filteredBin.length === 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 sticky top-0 z-10">
                       <tr>
-                        <td colSpan={5} className="px-4 py-16 text-center">
-                          <div className="text-4xl mb-2">🗑️</div>
-                          <p className="text-sm text-gray-400">Recycle bin is empty</p>
-                        </td>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-10">#</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Name</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Email</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell">Deleted On</th>
+                        <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
                       </tr>
-                    ) : filteredBin.map((u, idx) => (
-                      <tr key={u.uid} className="hover:bg-orange-50/30 transition-colors opacity-80">
-                        <td className="px-4 py-3 text-xs font-semibold text-gray-400 w-10">{idx + 1}</td>
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <p className="font-semibold text-gray-700">{u.lastName || u.name || '—'}</p>
-                          {u.firstName && <p className="text-xs text-gray-400">{u.firstName}</p>}
-                        </td>
-                        <td className="px-4 py-3 text-gray-400 text-xs max-w-[160px] truncate">{u.email}</td>
-                        <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap hidden sm:table-cell">
-                          {formatDate((u as any).deletedAt)}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <button
-                              onClick={() => setPending({ type: 'restore', user: u })}
-                              className="px-3 py-1.5 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 text-xs font-semibold transition-colors"
-                            >
-                              Restore
-                            </button>
-                            <button
-                              onClick={() => setPending({ type: 'hard-delete', user: u })}
-                              className="px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 text-xs font-semibold transition-colors"
-                            >
-                              Delete Forever
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {filteredBin.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-16 text-center">
+                            <div className="text-4xl mb-2">🗑️</div>
+                            <p className="text-sm text-gray-400">Recycle bin is empty</p>
+                          </td>
+                        </tr>
+                      ) : filteredBin.map((u, idx) => (
+                        <tr key={u.uid} className="hover:bg-orange-50/30 transition-colors opacity-80">
+                          <td className="px-4 py-3 text-xs font-semibold text-gray-400 w-10">{idx + 1}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <div className="flex items-center gap-2">
+                              <div>
+                                <p className="font-semibold text-gray-700">{u.lastName || u.name || '—'}</p>
+                                {u.firstName && <p className="text-xs text-gray-400">{u.firstName}</p>}
+                              </div>
+                              {u.advisorType && (
+                                <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                  u.advisorType === 'new' 
+                                    ? 'bg-green-100 text-green-700' 
+                                    : 'bg-blue-100 text-blue-700'
+                                }`}>
+                                  {u.advisorType === 'new' ? 'New' : 'Returnee'}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-gray-400 text-xs max-w-[160px] truncate">{u.email}</td>
+                          <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap hidden sm:table-cell">
+                            {formatDate((u as any).deletedAt)}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => setPending({ type: 'restore', user: u })}
+                                className="px-3 py-1.5 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 text-xs font-semibold transition-colors"
+                              >
+                                Restore
+                              </button>
+                              <button
+                                onClick={() => setPending({ type: 'hard-delete', user: u })}
+                                className="px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 text-xs font-semibold transition-colors"
+                              >
+                                Delete Forever
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
 

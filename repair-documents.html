@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Repair User Documents</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        .error { color: red; }
+        .success { color: green; }
+        button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        pre { background: #f5f5f5; padding: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>Repair User Documents</h1>
+    
+    <div class="section">
+        <p>This tool will repair the corrupted uploadedDocuments array in your user profile.</p>
+        <button onclick="repairDocuments()">Repair My Documents</button>
+    </div>
+    
+    <div id="results"></div>
+    
+    <script>
+        async function repairDocuments() {
+            const results = document.getElementById('results');
+            results.innerHTML = '<div class="section">Repairing documents...</div>';
+            
+            try {
+                // Get current user info first
+                const profileRes = await fetch('/api/user/profile');
+                if (!profileRes.ok) {
+                    throw new Error('Not authenticated');
+                }
+                
+                const profileData = await profileRes.json();
+                const uid = profileData.user?.uid;
+                
+                if (!uid) {
+                    throw new Error('No UID found');
+                }
+                
+                console.log('Repairing documents for UID:', uid);
+                
+                // Call repair API
+                const repairRes = await fetch('/api/repair/user-documents', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ uid })
+                });
+                
+                const repairData = await repairRes.json();
+                
+                let html = '<div class="section">';
+                if (repairRes.ok) {
+                    html += '<h2 class="success">Repair Successful!</h2>';
+                    html += `<p><strong>Message:</strong> ${repairData.message}</p>`;
+                    html += `<p><strong>Documents Count:</strong> ${repairData.documentsCount}</p>`;
+                    html += '<h3>Repaired Documents:</h3>';
+                    html += `<pre>${JSON.stringify(repairData.documents, null, 2)}</pre>`;
+                    html += '<p><button onclick="location.reload()">Refresh Dashboard</button></p>';
+                } else {
+                    html += '<h2 class="error">Repair Failed</h2>';
+                    html += `<p><strong>Error:</strong> ${repairData.error}</p>`;
+                }
+                html += '</div>';
+                
+                results.innerHTML = html;
+                
+            } catch (error) {
+                results.innerHTML = `<div class="section error"><h2>Error</h2><p>${error.message}</p><pre>${error.stack}</pre></div>`;
+            }
+        }
+    </script>
+</body>
+</html>

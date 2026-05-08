@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Level 5 Approval Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; }
+        .result { margin: 10px 0; padding: 10px; }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>Level 5 Approval System Test</h1>
+    
+    <div class="test-section">
+        <h3>Test Admin API</h3>
+        <button onclick="testAdminAPI()">Check Pending Approvals</button>
+        <div id="adminResult"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>Test User API</h3>
+        <button onclick="testUserAPI()">Check User Progress</button>
+        <div id="userResult"></div>
+    </div>
+
+    <script>
+        async function testAdminAPI() {
+            const resultDiv = document.getElementById('adminResult');
+            try {
+                const response = await fetch('/api/admin/level5-exam-approvals?status=pending');
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <div class="result success">
+                            <strong>✅ Admin API Working</strong><br>
+                            Found ${data.length} pending approvals<br>
+                            <pre>${JSON.stringify(data, null, 2)}</pre>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="result error">
+                            <strong>❌ Admin API Error</strong><br>
+                            ${data.error || 'Unknown error'}
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <strong>❌ Network Error</strong><br>
+                        ${error.message}
+                    </div>
+                `;
+            }
+        }
+        
+        async function testUserAPI() {
+            const resultDiv = document.getElementById('userResult');
+            try {
+                const response = await fetch('/api/user/level5-exam');
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <div class="result success">
+                            <strong>✅ User API Working</strong><br>
+                            Current Step: ${data.currentStep}<br>
+                            Receipt Uploaded: ${data.receiptUploaded ? 'Yes' : 'No'}<br>
+                            Admin Decision: ${data.adminDecision || 'Not set'}<br>
+                            <pre>${JSON.stringify(data, null, 2)}</pre>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="result error">
+                            <strong>❌ User API Error</strong><br>
+                            ${data.error || 'Unknown error'}
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <strong>❌ Network Error</strong><br>
+                        ${error.message}
+                    </div>
+                `;
+            }
+        }
+    </script>
+</body>
+</html>

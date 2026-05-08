@@ -183,6 +183,20 @@ export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
     const file = formData.get('file') as File | null
+    const examCategory = formData.get('examCategory') as string || 'IIAP'
+    const examSubtype = formData.get('examSubtype') as string || 'TRAD'
+    
+    // Get exam configuration from form data
+    const questionsPerSet = parseInt(formData.get('questionsPerSet') as string) || 50
+    const minutesPerSet = parseInt(formData.get('minutesPerSet') as string) || 60
+    const passingScore = parseInt(formData.get('passingScore') as string) || 75
+    const passingRequirement = formData.get('passingRequirement') as string
+    let passingRequirementObj = { type: 'all' }
+    try {
+      passingRequirementObj = JSON.parse(passingRequirement || '{}')
+    } catch (e) {
+      console.warn('Invalid passing requirement format, using default')
+    }
 
     if (!file) {
       return NextResponse.json({ error: 'No file provided.' }, { status: 400 })
@@ -192,14 +206,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Only .docx files are accepted.' }, { status: 400 })
     }
 
-    // Convert file → buffer
+    // Convert file → buffer with proper handling
     const arrayBuffer = await file.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
 
     // Extract text
     const { value: rawText } = await mammoth.extractRawText({ buffer })
 
-    
     if (!rawText || rawText.trim().length === 0) {
       return NextResponse.json(
         { error: 'Could not extract text from file.' },
@@ -217,7 +230,9 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // ─────────────────────────────────────────────
+    // Generate examTypeId before using it
+    const examTypeId = `${examCategory}_${examSubtype}`
+
     // Upload file to Cloudinary
     // ─────────────────────────────────────────────
     const uploadRes = await uploadBufferToCloudinary(buffer, file.name)
@@ -228,7 +243,10 @@ export async function POST(req: NextRequest) {
     // ─────────────────────────────────────────────
     // Delete existing questions
     // ─────────────────────────────────────────────
-    const existingSnapshot = await adminDb.collection('questions').get()
+    const existingSnapshot = await adminDb
+      .collection('questions')
+      .where('examType', '==', examTypeId)
+      .get()
     const deletePromises = existingSnapshot.docs.map(doc => doc.ref.delete())
     await Promise.all(deletePromises)
 
@@ -242,11 +260,55 @@ export async function POST(req: NextRequest) {
       const chunk = questions.slice(i, i + BATCH_SIZE)
 
       chunk.forEach(q => {
-        const ref = adminDb.collection('questions').doc(String(q.num))
-        batch.set(ref, q)
+        const ref = adminDb.collection('questions').doc(`${examTypeId}_${q.num}`)
+        batch.set(ref, {
+          ...q,
+          examType: examTypeId
+        })
       })
 
       await batch.commit()
+    }
+
+    // ─────────────────────────────────────────────
+    // Create exam type entry in level4ExamTypes
+    // ─────────────────────────────────────────────
+    const examTypeData = {
+      name: `${examCategory} ${examSubtype}`,
+      category: examCategory,
+      deliveryMode: examSubtype,
+      paymentAmount: 0,
+      deliveryMethod: 'ONLINE',
+      questionCount: questions.length,
+      fileName: file.name,
+      uploadedAt: new Date().toISOString(),
+      isActive: true,
+      storagePath,
+      downloadUrl,
+      questionsPerSet,
+      minutesPerSet,
+      passingScore,
+      passingRequirement: passingRequirementObj
+    }
+
+    await adminDb.collection('settings').doc('level4ExamTypes').set({
+      [examTypeId]: examTypeData
+    }, { merge: true })
+
+    // ─────────────────────────────────────────────
+    // Reset user progress for this exam type
+    // ─────────────────────────────────────────────
+    const usersSnapshot = await adminDb.collection('users').get()
+    let affectedUsers = 0
+
+    for (const userDoc of usersSnapshot.docs) {
+      const userExamRef = userDoc.ref.collection('level4Exams').doc(examTypeId)
+      const examRecord = await userExamRef.get()
+      
+      if (examRecord.exists) {
+        await userExamRef.delete()
+        affectedUsers++
+      }
     }
 
     // ─────────────────────────────────────────────
@@ -258,7 +320,15 @@ export async function POST(req: NextRequest) {
       storagePath,
       downloadUrl,
       uploadedAt: new Date().toISOString(),
+      examCategory,
+      examSubtype,
+      examTypeId
     })
+
+    // ─────────────────────────────────────────────
+    // Calculate total sets using the uploaded configuration
+    // ─────────────────────────────────────────────
+    const totalSets = Math.floor(questions.length / questionsPerSet) + (questions.length % questionsPerSet > 0 ? 1 : 0)
 
     // ─────────────────────────────────────────────
     // Response
@@ -266,7 +336,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       count: questions.length,
-      message: `Successfully uploaded ${questions.length} questions.`,
+      totalSets,
+      affectedUsers,
+      message: `Successfully uploaded ${questions.length} questions for ${examTypeId}. ${totalSets} exam sets created. ${affectedUsers > 0 ? `${affectedUsers} users will be notified to reset their progress.` : ''}`,
     })
 
   } catch (error: any) {

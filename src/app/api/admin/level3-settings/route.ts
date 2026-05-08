@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { adminDb } from '@/lib/firebase-admin'
+import { createAdminLog } from '@/lib/admin-logs'
 
 const SETTINGS_DOC = adminDb.collection('settings').doc('level3')
 
@@ -68,16 +69,17 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
+    const { formColumns, videos, adminEmail } = body
 
     // Basic validation
-    if (!body.formColumns || !body.videos) {
+    if (!formColumns || !videos) {
       return NextResponse.json(
         { error: 'Invalid settings format.' },
         { status: 400 }
       )
     }
 
-    if (!Array.isArray(body.formColumns) || !Array.isArray(body.videos)) {
+    if (!Array.isArray(formColumns) || !Array.isArray(videos)) {
       return NextResponse.json(
         { error: 'formColumns and videos must be arrays.' },
         { status: 400 }
@@ -85,10 +87,18 @@ export async function POST(req: NextRequest) {
     }
 
     await SETTINGS_DOC.set({
-      formColumns: body.formColumns,
-      videos: body.videos,
+      formColumns,
+      videos,
       updatedAt: new Date().toISOString(),
     })
+
+    // Log the admin action
+    await createAdminLog(
+      adminEmail || 'Admin',
+      'System Settings',
+      'Settings Update',
+      'Updated Level 3 settings'
+    )
 
     return NextResponse.json({ success: true, message: 'Settings saved successfully.' })
 

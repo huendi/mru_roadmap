@@ -62,9 +62,10 @@ export async function POST(request: NextRequest) {
     try {
       await signInWithEmailAndPassword(auth, sanitizedAdminEmail, adminPassword)
     } catch (error: any) {
-      if (error.code === 'auth/invalid-credential') {
+      // Use user-friendly messages instead of Firebase error codes
+      if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found') {
         return NextResponse.json(
-          { success: false, message: 'This admin account is disabled.' },
+          { success: false, message: 'Admin account not found or disabled.' },
           { status: 401 }
         )
       } else if (error.code === 'auth/wrong-password') {
@@ -92,7 +93,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 3: Create new admin account with PIN
+    let originalAdminUser = null
     try {
+      // Store original admin user before creating new one
+      originalAdminUser = auth.currentUser
+      
       const userCredential = await createUserWithEmailAndPassword(auth, sanitizedNewEmail, newPassword)
       const firebaseUser = userCredential.user
 
@@ -109,7 +114,7 @@ export async function POST(request: NextRequest) {
         profileImage: '',
         photoURL: '',
         role: 'admin',
-        status: 'active',
+        status: 'approved',
         currentLevel: 1,
         requirementsCompleted: [],
         examScores: [],
@@ -121,6 +126,16 @@ export async function POST(request: NextRequest) {
 
       const userRef = doc(db, 'users', firebaseUser.uid)
       await setDoc(userRef, userData)
+
+      // Restore original admin session
+      if (originalAdminUser && originalAdminUser.email !== sanitizedNewEmail) {
+        try {
+          await signInWithEmailAndPassword(auth, originalAdminUser.email!, adminPassword)
+        } catch (restoreError) {
+          // If restoration fails, log error but don't fail the whole operation
+          console.error('Failed to restore original admin session:', restoreError)
+        }
+      }
 
       return NextResponse.json({
         success: true,
@@ -146,8 +161,9 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         )
       }
+      // Don't expose Firebase error details to users
       return NextResponse.json(
-        { success: false, message: error.message || 'Failed to create admin account' },
+        { success: false, message: 'Failed to create admin account. Please check your inputs and try again.' },
         { status: 500 }
       )
     }

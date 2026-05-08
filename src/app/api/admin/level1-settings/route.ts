@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { adminDb } from '@/lib/firebase-admin'
+import { createAdminLog } from '@/lib/admin-logs'
 
 const DEFAULT_SETTINGS = {
   minDocsToPass: 4,
@@ -37,7 +38,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     console.log('Received level1 settings:', body)
-    const { minDocsToPass, totalDocs, requirements } = body
+    const { minDocsToPass, totalDocs, requirements, adminEmail } = body
 
     // Validate required fields
     if (minDocsToPass === undefined || !requirements) {
@@ -55,6 +56,14 @@ export async function POST(req: NextRequest) {
     console.log('Saving settings data:', settingsData)
     await adminDb.collection('settings').doc('level1').set(settingsData, { merge: true })
     console.log('Settings saved successfully')
+
+    // Log the admin action
+    await createAdminLog(
+      adminEmail || 'Admin',
+      'System Settings',
+      'Settings Update',
+      'Updated Level 1 settings'
+    )
 
     return NextResponse.json(settingsData)
   } catch (error) {

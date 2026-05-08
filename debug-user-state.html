@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug User State</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        .error { color: red; }
+        .success { color: green; }
+        pre { background: #f5f5f5; padding: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>User State Debug Tool</h1>
+    
+    <div class="section">
+        <h2>Check User Data</h2>
+        <input type="text" id="uid" placeholder="Enter User ID" style="width: 300px; padding: 5px;">
+        <button onclick="checkUserState()" style="padding: 5px 15px; margin-left: 10px;">Check State</button>
+    </div>
+    
+    <div id="results"></div>
+    
+    <script>
+        async function checkUserState() {
+            const uid = document.getElementById('uid').value;
+            if (!uid) {
+                alert('Please enter a User ID');
+                return;
+            }
+            
+            const results = document.getElementById('results');
+            results.innerHTML = '<div class="section">Loading...</div>';
+            
+            try {
+                // Fetch user profile
+                const profileRes = await fetch(`/api/user/profile?uid=${uid}`);
+                const profileData = await profileRes.json();
+                
+                // Fetch user documents
+                const docsRes = await fetch(`/api/user/documents?uid=${uid}`);
+                const docsData = await docsRes.json();
+                
+                // Fetch Level 5 progress
+                const level5Res = await fetch(`/api/user/level5-exam`);
+                const level5Data = await level5Res.json();
+                
+                let html = '<div class="section success"><h2>User Profile Data</h2>';
+                html += `<pre>${JSON.stringify(profileData, null, 2)}</pre></div>`;
+                
+                html += '<div class="section success"><h2>User Documents</h2>';
+                html += `<pre>${JSON.stringify(docsData, null, 2)}</pre></div>`;
+                
+                html += '<div class="section success"><h2>Level 5 Progress</h2>';
+                html += `<pre>${JSON.stringify(level5Data, null, 2)}</pre></div>`;
+                
+                // Calculate progress
+                const user = profileData.user;
+                if (user) {
+                    const level1Docs = docsData.filter(doc => doc.level === 1).length;
+                    const requirements = user.requirementsCompleted || [];
+                    
+                    html += '<div class="section"><h2>Calculated Progress</h2>';
+                    html += `<p><strong>Level 1 Documents:</strong> ${level1Docs}</p>`;
+                    html += `<p><strong>Requirements Completed:</strong> ${requirements.join(', ')}</p>`;
+                    html += `<p><strong>Current Level:</strong> ${user.currentLevel}</p>`;
+                    html += '</div>';
+                }
+                
+                results.innerHTML = html;
+                
+            } catch (error) {
+                results.innerHTML = `<div class="section error"><h2>Error</h2><pre>${error.message}</pre></div>`;
+            }
+        }
+    </script>
+</body>
+</html>

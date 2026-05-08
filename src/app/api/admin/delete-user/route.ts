@@ -36,7 +36,7 @@ cloudinary.config({
 
 export async function POST(request: NextRequest) {
   try {
-    const { uid } = await request.json()
+    const { uid, adminEmail } = await request.json()
 
     if (!uid) {
       return NextResponse.json({ error: 'User ID is required' }, { status: 400 })
@@ -55,6 +55,9 @@ export async function POST(request: NextRequest) {
     if (!userDoc.exists) {
       return NextResponse.json({ error: 'User not found in Firestore' }, { status: 404 })
     }
+
+    const userData = userDoc.data() as any
+    const targetUserEmail = userData?.email || 'Unknown'
 
     let cloudinaryDeleted = false
     let firestoreDeleted = false
@@ -102,7 +105,31 @@ export async function POST(request: NextRequest) {
       // Continue even if Cloudinary fails - user data is already deleted
     }
 
-    // 5. Return success with deletion status
+    // 5. Log the admin action
+    if (adminEmail && firestoreDeleted) {
+      try {
+        // Get user data for logging
+        const userDoc = await db.collection('users').doc(uid).get()
+        const userData = userDoc.data() as any
+        const targetUserName = userData?.name || userData?.displayName || targetUserEmail
+        
+        await db.collection('adminLogs').add({
+          actorName: adminEmail,           // Will be updated to actual name
+          targetUserName: targetUserName,
+          activity: 'User Account Management',
+          action: 'Deleted',
+          targetUserEmail: targetUserEmail,
+          timestamp: new Date(),
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        })
+        console.log('Admin log created for user deletion:', adminEmail)
+      } catch (logError: any) {
+        console.warn('Failed to create admin log:', logError.message)
+        // Continue even if logging fails
+      }
+    }
+
+    // 6. Return success with deletion status
     return NextResponse.json({ 
       message: 'User deleted successfully',
       deleted: {

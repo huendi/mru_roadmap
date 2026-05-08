@@ -3,6 +3,7 @@
 // admin/settings/components/Level3Panel.tsx
 
 import { useState, useEffect } from 'react'
+import { auth } from '@/lib/auth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -215,16 +216,33 @@ export default function Level3Panel() {
     setSaving(true)
     setError('')
     try {
+      const payload = {
+        ...draft,
+        adminEmail: auth.currentUser?.email || 'Admin',
+      }
       const res = await fetch('/api/admin/level3-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
+        body: JSON.stringify(payload),
       })
       if (!res.ok) throw new Error()
       setSettings(JSON.parse(JSON.stringify(draft)))
       setSaved(true)
       setIsEditing(false)
       setTimeout(() => setSaved(false), 3000)
+
+      // Log the settings update
+      try {
+        const { createAdminLog } = await import('@/lib/admin-logs')
+        await createAdminLog(
+          auth.currentUser?.email || 'Admin',
+          'Level 3 Settings',
+          'Settings Update',
+          'Saved Level 3 video and form configuration'
+        )
+      } catch (logError) {
+        console.warn('Failed to create admin log for Level 3 save:', logError)
+      }
     } catch {
       setError('Failed to save. Please try again.')
     } finally {

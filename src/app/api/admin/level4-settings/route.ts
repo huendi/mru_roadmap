@@ -4,6 +4,7 @@
  
 import { NextRequest, NextResponse } from 'next/server'
 import { adminDb } from '@/lib/firebase-admin'
+import { createAdminLog } from '@/lib/admin-logs'
  
 const DOC_REF = () => adminDb.collection('settings').doc('level4ExamConfig')
  
@@ -19,11 +20,20 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const { questionsPerSet, minutesPerSet, passingScore, passingRequirement } = await req.json()
+    const { questionsPerSet, minutesPerSet, passingScore, passingRequirement, adminEmail } = await req.json()
     await DOC_REF().set(
       { questionsPerSet, minutesPerSet, passingScore, passingRequirement },
       { merge: true }
     )
+
+    // Log the admin action
+    await createAdminLog(
+      adminEmail || 'Admin',
+      'System Settings',
+      'Settings Update',
+      'Updated Level 4 exam settings'
+    )
+
     return NextResponse.json({ success: true })
   } catch {
     return NextResponse.json({ error: 'Failed to save config.' }, { status: 500 })

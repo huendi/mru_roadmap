@@ -41,9 +41,12 @@ function shuffleArray<T>(arr: T[]): T[] {
 export default function Level4ExamPage() {
   const router  = useRouter()
   const params  = useParams()
-  const examId  = Number(params.id)
+  const examTypeId = params.id as string
+  const searchParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+  const setNumber = Number(searchParams.get('set') || '1')
 
   const [user, setUser]         = useState<User | null>(null)
+  const [examType, setExamType] = useState<any>(null)
   const [config, setConfig]     = useState<ExamConfig | null>(null)
   const [phase, setPhase]       = useState<'loading' | 'instructions' | 'exam' | 'result'>('loading')
   const [questions, setQuestions] = useState<ShuffledQuestion[]>([])
@@ -53,56 +56,83 @@ export default function Level4ExamPage() {
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult]     = useState<{ score: number; correct: number; passed: boolean } | null>(null)
   const [error, setError]       = useState('')
+  const [examStartTime, setExamStartTime] = useState<number | null>(null)
 
   useEffect(() => {
     const unsub = onAuthStateChange(async (userData) => {
       if (!userData) { router.push('/auth'); return }
       if (userData.currentLevel < 4) { router.push('/dashboard'); return }
 
-      // Load config first to validate examId range
+      // Load exam type and config
       try {
-        const res = await fetch('/api/level4/config')
-        if (!res.ok) throw new Error()
-        const cfg: ExamConfig = await res.json()
-        if (examId < 1 || examId > cfg.totalSets) {
+        const examTypesRes = await fetch(`/api/user/level4-exam-types?uid=${userData.uid}`)
+        
+        if (!examTypesRes.ok) throw new Error()
+        const examData = await examTypesRes.json()
+        const examTypeData = examData.examTypes.find((t: any) => t.id === examTypeId)
+        
+        if (!examTypeData) {
           router.push('/level/4'); return
         }
+        
+        // Create config from exam type data
+        const cfg: ExamConfig = {
+          questionsPerSet: examTypeData.questionsPerSet || 50,
+          minutesPerSet: examTypeData.minutesPerSet || 60,
+          passingScore: examTypeData.passingScore || 75,
+          totalSets: Math.ceil(examTypeData.questionCount / (examTypeData.questionsPerSet || 50)),
+          totalQuestions: examTypeData.questionCount,
+          bankVersion: examTypeData.uploadedAt || ''
+        }
+        
         setConfig(cfg)
+        setExamType(examTypeData)
         setTimeLeft(cfg.minutesPerSet * 60)
         setUser(userData)
-        loadQuestions(examId)
-      } catch {
+        loadQuestions(examTypeId, setNumber)
+      } catch (error) {
+        console.error('Failed to load exam:', error)
         setError('Failed to load exam config.')
         setPhase('instructions')
       }
     })
     return unsub
-  }, [router, examId])
+  }, [router, examTypeId, setNumber])
 
-  const loadQuestions = async (id: number) => {
+  const loadQuestions = async (examTypeId: string, setNumber: number) => {
     try {
-      const res = await fetch(`/api/level4/questions?examId=${id}`)
-      if (!res.ok) throw new Error('Failed to load questions')
+      console.log(`Loading questions for exam type: ${examTypeId}, set: ${setNumber}`)
+      const res = await fetch(`/api/level4/questions?examTypeId=${examTypeId}&set=${setNumber}`)
+      
+      if (!res.ok) {
+        const errorData = await res.json()
+        console.error('API Error:', errorData)
+        throw new Error(errorData.error || 'Failed to load questions')
+      }
+      
       const data = await res.json()
+      console.log('API Response:', data)
 
       const allQuestions: Question[] = data.questions
 
       const shuffled: ShuffledQuestion[] = allQuestions.map(q => {
         const letters  = Object.keys(q.options)
-        const combined = letters.map(l => ({ text: q.options[l], isCorrect: l === q.answer }))
-        const sc       = shuffleArray(combined)
+        const options = letters.map(l => q.options[l])
+        const correctIndex = letters.findIndex(l => l === q.answer)
         return {
           id: q.id || String(q.num),
           question: q.question,
-          options: sc.map(c => c.text),
-          correctIndex: sc.findIndex(c => c.isCorrect),
+          options,
+          correctIndex,
         }
       })
 
       setQuestions(shuffleArray(shuffled))
       setPhase('instructions')
-    } catch {
-      setError('Failed to load questions. Please try again.')
+    } catch (error) {
+      console.error('Failed to load questions:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Failed to load questions. Please try again.'
+      setError(errorMessage)
       setPhase('instructions')
     }
   }
@@ -129,6 +159,12 @@ export default function Level4ExamPage() {
     const correct  = questions.reduce((acc, q, i) => acc + (answers[i] === q.correctIndex ? 1 : 0), 0)
     const score    = Math.round((correct / totalQ) * 100)
     const passed   = score >= config.passingScore
+    
+    // Calculate duration in minutes
+    const durationMinutes = examStartTime 
+      ? Math.round((Date.now() - examStartTime) / (1000 * 60))
+      : config.minutesPerSet // Fallback to configured time if start time not recorded
+    
     setResult({ score, correct, passed })
     setPhase('result')
 
@@ -138,7 +174,8 @@ export default function Level4ExamPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           uid: user.uid,
-          examId,
+          examId: examTypeId,
+          setNumber,
           score,
           correctAnswers: correct,
           totalQuestions: totalQ,
@@ -146,6 +183,7 @@ export default function Level4ExamPage() {
           dateTaken: new Date().toISOString(),
           bankVersion: config.bankVersion,
           totalSets: config.totalSets,
+          durationMinutes, // Add duration to the payload
         }),
       })
     } catch (e) {
@@ -153,7 +191,7 @@ export default function Level4ExamPage() {
     } finally {
       setSubmitting(false)
     }
-  }, [submitting, user, questions, answers, examId, config])
+  }, [submitting, user, questions, answers, examTypeId, setNumber, config, examStartTime])
 
   const answeredCount = Object.keys(answers).length
   const passingScore  = config?.passingScore ?? 75
@@ -166,7 +204,7 @@ export default function Level4ExamPage() {
       <div className="min-h-screen bg-gradient-to-br from-yellow-50 to-amber-100 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto mb-4" />
-          <p className="text-gray-600">Loading Exam Set {examId}...</p>
+          <p className="text-gray-600">Loading Exam Set {setNumber}...</p>
         </div>
       </div>
     )
@@ -188,8 +226,8 @@ export default function Level4ExamPage() {
               Back
             </button>
             <div>
-              <p className="text-xs font-semibold text-amber-600 tracking-widest uppercase">Level 4 · Set {examId}</p>
-              <h1 className="text-lg font-bold text-gray-900">Mock Examination Set {examId}</h1>
+              <p className="text-xs font-semibold text-amber-600 tracking-widest uppercase">Level 4 · Set {setNumber}</p>
+              <h1 className="text-lg font-bold text-gray-900">Mock Examination Set {setNumber}</h1>
             </div>
           </div>
         </header>
@@ -201,7 +239,7 @@ export default function Level4ExamPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
             </div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-1">Exam Set {examId}</h2>
+            <h2 className="text-2xl font-bold text-gray-900 mb-1">Exam Set {setNumber}</h2>
             <p className="text-gray-500 text-sm">Financial Advisor Licensure · Mock Examination</p>
           </div>
 
@@ -248,11 +286,14 @@ export default function Level4ExamPage() {
           </div>
 
           <button
-            onClick={() => { setPhase('exam') }}
+            onClick={() => { 
+              setExamStartTime(Date.now())
+              setPhase('exam') 
+            }}
             disabled={!!error || questions.length === 0}
             className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold text-base hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-md"
           >
-            Start Exam Set {examId} →
+            Start Exam Set {setNumber} →
           </button>
         </main>
       </div>
@@ -265,7 +306,7 @@ export default function Level4ExamPage() {
       <div className="min-h-screen bg-gradient-to-br from-yellow-50 to-amber-100">
         <header className="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm">
           <div className="max-w-3xl mx-auto px-4 sm:px-6 py-4">
-            <p className="text-xs font-semibold text-amber-600 tracking-widest uppercase">Level 4 · Set {examId} · Results</p>
+            <p className="text-xs font-semibold text-amber-600 tracking-widest uppercase">Level 4 · Set {setNumber} · Results</p>
             <h1 className="text-lg font-bold text-gray-900">Exam Complete</h1>
           </div>
         </header>
@@ -288,6 +329,9 @@ export default function Level4ExamPage() {
             </p>
             <p className="text-gray-400 text-sm mb-4">
               {result.correct} / {questions.length} correct answers
+            </p>
+            <p className="text-gray-400 text-sm mb-4">
+              Time taken: {Math.round((Date.now() - (examStartTime || Date.now())) / (1000 * 60))} minutes
             </p>
             <span className={`inline-block px-4 py-1.5 rounded-full text-sm font-semibold ${result.passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
               {result.passed ? '🎉 Set Passed!' : 'Not Passed'}
@@ -328,11 +372,11 @@ export default function Level4ExamPage() {
                 setResult(null)
                 setTimeLeft((config?.minutesPerSet ?? 60) * 60)
                 setPhase('loading')
-                loadQuestions(examId)
+                loadQuestions(examTypeId, setNumber)
               }}
               className="w-full py-3.5 rounded-xl border border-gray-300 text-gray-600 font-semibold hover:bg-gray-50 transition-colors"
             >
-              Retake Set {examId}
+              Retake Set {setNumber}
             </button>
           </div>
         </main>
@@ -352,7 +396,7 @@ export default function Level4ExamPage() {
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-3">
           <div className="flex items-center justify-between mb-2">
             <div>
-              <p className="text-xs font-semibold text-amber-600 tracking-widest uppercase">Set {examId}</p>
+              <p className="text-xs font-semibold text-amber-600 tracking-widest uppercase">Set {setNumber}</p>
               <p className="text-xs text-gray-400">
                 Q {currentQ + 1}/{questions.length} · {answeredCount} answered
               </p>

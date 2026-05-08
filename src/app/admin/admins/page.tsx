@@ -83,6 +83,12 @@ function PinModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () =
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  // Clear PIN and error when modal opens
+  useEffect(() => {
+    setPin('')
+    setError('')
+  }, [onClose, onSuccess]) // Trigger when modal opens (new callbacks)
+
   const handleCheck = async () => {
     setLoading(true)
     setError('')
@@ -124,12 +130,34 @@ function PinModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () =
 
         <input
           type="password"
+          autoComplete="off"
           value={pin}
           onChange={e => setPin(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleCheck()}
+          onFocus={() => {
+            // Clear PIN on focus to prevent browser autofill
+            if (pin && pin.length > 0) {
+              setPin('')
+            }
+          }}
+          onBlur={() => {
+            // Additional check on blur to clear any unwanted autofill
+            if (pin && pin.length > 0 && /^\*+$/.test(pin)) {
+              setPin('')
+            }
+          }}
+          onInput={(e) => {
+            const target = e.target as HTMLInputElement
+            // Prevent setting to asterisks from browser autofill
+            if (/^\*+$/.test(target.value)) {
+              target.value = ''
+              setPin('')
+            }
+          }}
           className="w-full border border-gray-200 p-3 text-center text-xl tracking-widest rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
           placeholder="••••••"
           autoFocus
+          style={{ WebkitAppearance: 'none', MozAppearance: 'textfield' }}
         />
 
         {error && (
@@ -181,14 +209,22 @@ function AddAdminModal({ onClose, onSuccess }: { onClose: () => void; onSuccess:
     setLoading(true)
     setError('')
     try {
-      const adminEmail = process.env.NEXT_PUBLIC_ADMIN_EMAIL!
-      await signInWithEmailAndPassword(auth, adminEmail, yourPassword)
+      // Use the current authenticated admin user
+      const currentUser = auth.currentUser
+      if (!currentUser) {
+        setError('No admin session found. Please sign in again.')
+        return
+      }
+      
+      // Re-authenticate the current user with their password
+      await signInWithEmailAndPassword(auth, currentUser.email!, yourPassword)
       setStep('newadmin')
     } catch (err: any) {
-      if (err.code === 'auth/invalid-credential') {
-        setError('This admin account is disabled.')
+      // Use user-friendly messages instead of Firebase error codes
+      if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
+        setError('Incorrect password. Please try again.')
       } else {
-        setError('Wrong admin password.')
+        setError('Authentication failed. Please try again.')
       }
     } finally {
       setLoading(false)
@@ -215,20 +251,33 @@ function AddAdminModal({ onClose, onSuccess }: { onClose: () => void; onSuccess:
         return
       }
 
-      const res = await fetch('/api/verify-pin', {
+      const pinRes = await fetch('/api/verify-pin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pin }),
       })
-      const data = await res.json()
-      if (!data.success) {
+      const pinData = await pinRes.json()
+      if (!pinData.success) {
         setError('Wrong PIN.')
         setLoading(false)
         return
       }
 
-      const result = await createNewAdmin(email, password, pin)
-      if (!result.success) throw new Error(result.message)
+      // Use server-side API to create admin without affecting current session
+      const createRes = await fetch('/api/admin/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          adminEmail: auth.currentUser?.email,
+          adminPassword: yourPassword, // This should be passed from the verification step
+          newEmail: email,
+          newPassword: password,
+          pin: pin
+        }),
+      })
+      
+      const createData = await createRes.json()
+      if (!createData.success) throw new Error(createData.message)
 
       onSuccess()
       onClose()
@@ -456,6 +505,8 @@ export default function AdminPage() {
   useEffect(() => {
     if (pending || pendingCallback || showAdd) {
       document.body.style.overflow = 'hidden'
+      // Clear search when any modal opens to prevent auto-filling
+      setSearch('')
     } else {
       document.body.style.overflow = ''
     }
@@ -481,7 +532,7 @@ export default function AdminPage() {
     const isActive = admin.status === 'active' || !admin.status
     const newStatus = isActive ? 'disabled' : 'active'
     try {
-      await updateUserStatus(admin.uid, newStatus as any)
+      await updateUserStatus(admin.uid, newStatus as any, currentUserEmail || undefined)
       setAdmins(prev =>
         prev.map(a => a.uid === admin.uid ? { ...a, status: newStatus } : a)
       )
@@ -501,7 +552,7 @@ export default function AdminPage() {
       const res = await fetch('/api/admin/delete-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid: admin.uid }),
+        body: JSON.stringify({ uid: admin.uid, adminEmail: currentUserEmail }),
       })
 
       const contentType = res.headers.get('content-type')
@@ -516,6 +567,7 @@ export default function AdminPage() {
 
       setAdmins(prev => prev.filter(a => a.uid !== admin.uid))
       showSuccess('Admin account permanently deleted.')
+      setSearch('')
     } catch (e: any) {
       showError('Delete failed: ' + e.message)
     }
@@ -655,7 +707,28 @@ export default function AdminPage() {
           placeholder="Search by email or name..."
           value={search}
           onChange={e => setSearch(e.target.value)}
+          onFocus={() => {
+            // Clear search on focus to prevent browser autofill
+            if (search === 'minda_wendu@dadev.com') {
+              setSearch('')
+            }
+          }}
+          onBlur={() => {
+            // Additional check on blur to clear any unwanted autofill
+            if (search === 'minda_wendu@dadev.com') {
+              setSearch('')
+            }
+          }}
+          onInput={(e) => {
+            const target = e.target as HTMLInputElement
+            // Prevent setting to the problematic email through any means
+            if (target.value === 'minda_wendu@dadev.com') {
+              target.value = ''
+              setSearch('')
+            }
+          }}
           className="w-full pl-9 pr-4 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-900 bg-white"
+          style={{ WebkitAppearance: 'none', MozAppearance: 'textfield' }}
         />
       </div>
 

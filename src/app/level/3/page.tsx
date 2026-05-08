@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { onAuthStateChange } from '@/lib/auth'
+import { authenticatedFetch } from '@/lib/api'
 import { User } from '@/types'
 import Navbar from '@/components/Navbar'
 
@@ -85,7 +86,7 @@ export default function Level2Page() {
       if (!userData.profileCompleted) { router.push('/complete-profile'); return }
 
       try {
-        const res = await fetch(`/api/user/documents?uid=${userData.uid}`)
+        const res = await authenticatedFetch('/api/user/documents')
         if (res.ok) {
           const allDocs = await res.json()
           const level1Docs = allDocs.filter((doc: any) => doc.level === 1)

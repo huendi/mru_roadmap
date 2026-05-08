@@ -18,6 +18,9 @@ export async function GET() {
       count: doc.data().count as number,
       uploadedAt: doc.data().uploadedAt as string,
       downloadUrl: doc.data().downloadUrl as string | undefined,
+      examCategory: doc.data().examCategory as string | undefined,
+      examSubtype: doc.data().examSubtype as string | undefined,
+      examTypeId: doc.data().examTypeId as string | undefined,
     }))
 
     return NextResponse.json(uploads)

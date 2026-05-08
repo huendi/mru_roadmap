@@ -3,6 +3,7 @@
 // admin/settings/components/Level2Panel.tsx
 import { useState, useEffect, useRef } from 'react'
 import { uploadToCloudinary } from '@/lib/cloudinary'
+import { auth } from '@/lib/auth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -133,16 +134,33 @@ export default function Level2Panel() {
     setSaving(true)
     setError('')
     try {
+      const payload = {
+        ...draft,
+        adminEmail: auth.currentUser?.email || 'Admin',
+      }
       const res = await fetch('/api/admin/level2-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
+        body: JSON.stringify(payload),
       })
       if (!res.ok) throw new Error()
       setSettings(JSON.parse(JSON.stringify(draft)))
       setSaved(true)
       setIsEditing(false)
       setTimeout(() => setSaved(false), 3000)
+
+      // Log the settings update
+      try {
+        const { createAdminLog } = await import('@/lib/admin-logs')
+        await createAdminLog(
+          auth.currentUser?.email || 'Admin',
+          'Level 2 Settings',
+          'Settings Update',
+          'Saved Level 2 training configuration'
+        )
+      } catch (logError) {
+        console.warn('Failed to create admin log for Level 2 save:', logError)
+      }
     } catch {
       setError('Failed to save. Please try again.')
     } finally {
@@ -167,6 +185,19 @@ export default function Level2Panel() {
         uploaded.push({ url, caption: '' })
       }
       setDraft(prev => prev ? { ...prev, instructionSlides: [...prev.instructionSlides, ...uploaded] } : prev)
+      
+      // Log the photo upload action
+      try {
+        const { createAdminLog } = await import('@/lib/admin-logs')
+        await createAdminLog(
+          auth.currentUser?.email || 'Admin',
+          'Level 2 Settings',
+          'Content Update',
+          `Uploaded ${arr.length} photo${arr.length > 1 ? 's' : ''} to Level 2 instruction slides`
+        )
+      } catch (logError) {
+        console.warn('Failed to create admin log for photo upload:', logError)
+      }
     } catch (e: any) {
       setError(e.message || 'Failed to upload image(s).')
     } finally {

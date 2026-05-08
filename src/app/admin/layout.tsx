@@ -5,14 +5,19 @@ import { useRouter, usePathname } from 'next/navigation'
 import { onAuthStateChange, signOutUser } from '@/lib/auth'
 import { User } from '@/types'
 import { getAuth, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth'
+import { authenticatedFetch } from '@/lib/api'
 
 declare global {
   interface Window {
     __setAdminPendingCount?: (n: number) => void
+    __setApprovalCounts?: (counts: { userPending: number; level2Cert: number; level5Exam: number }) => void
+    __getCurrentApprovalCounts?: () => { userPending: number; level2Cert: number; level5Exam: number }
   }
 }
 
-type ActiveTab = 'overview' | 'users' | 'admins' | 'settings'
+type ActiveTab = 'overview' | 'approvals' | 'users' | 'admins' | 'settings' | 'logs'
+type ApprovalsSubTab = 'user-pending' | 'level2-cert' | 'level5-exam'
+type SettingsSubTab = 'level1' | 'level2' | 'level3' | 'level4' | 'level5' | 'level6' | 'level7'
 
 // ─── Change Password Modal ────────────────────────────────────────────────────
 
@@ -215,6 +220,16 @@ const IconSettings = () => (
     <circle cx="12" cy="12" r="3" />
   </svg>
 )
+const IconApprovals = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+  </svg>
+)
+const IconLogs = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+  </svg>
+)
 
 // ─── Admin Layout ─────────────────────────────────────────────────────────────
 
@@ -226,11 +241,20 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [pendingCount, setPendingCount]             = useState(0)
   const [sidebarOpen, setSidebarOpen]               = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
+  const [approvalsOpen, setApprovalsOpen]         = useState(false)
+  const [settingsOpen, setSettingsOpen]           = useState(false)
+  const [approvalCounts, setApprovalCounts]       = useState({
+    userPending: 0,
+    level2Cert: 0,
+    level5Exam: 0
+  })
 
   const activeTab: ActiveTab =
-    pathname.startsWith('/admin/users')    ? 'users'    :
-    pathname.startsWith('/admin/admins')   ? 'admins'   :
-    pathname.startsWith('/admin/settings') ? 'settings' : 'overview'
+    pathname.startsWith('/admin/approvals') ? 'approvals' :
+    pathname.startsWith('/admin/users')     ? 'users'     :
+    pathname.startsWith('/admin/admins')    ? 'admins'    :
+    pathname.startsWith('/admin/settings')  ? 'settings'  :
+    pathname.startsWith('/admin/logs')      ? 'logs'      : 'overview'
 
   useEffect(() => {
     const unsub = onAuthStateChange((userData) => {
@@ -243,11 +267,60 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }, [router])
 
   useEffect(() => {
-    window.__setAdminPendingCount = (n: number) => setPendingCount(n)
-    return () => { delete window.__setAdminPendingCount }
-  }, [])
+    window.__setAdminPendingCount = (n: number) => {
+      setPendingCount(n)
+      // Update userPending count for backward compatibility
+      setApprovalCounts(prev => ({ ...prev, userPending: n }))
+    }
+    window.__setApprovalCounts = (counts: { userPending: number; level2Cert: number; level5Exam: number }) => {
+      setApprovalCounts(counts)
+      // Update total pending count
+      const total = counts.userPending + counts.level2Cert + counts.level5Exam
+      setPendingCount(total)
+    }
+    window.__getCurrentApprovalCounts = () => approvalCounts
+    return () => { 
+      delete window.__setAdminPendingCount
+      delete window.__setApprovalCounts
+      delete window.__getCurrentApprovalCounts
+    }
+  }, [approvalCounts])
 
   useEffect(() => { setSidebarOpen(false) }, [pathname])
+
+  // After your existing useEffects, add this:
+  useEffect(() => {
+    if (!user) return // wait for auth
+
+    const fetchAllCounts = async () => {
+      try {
+        const [userRes, level2Res, level5Res] = await Promise.all([
+          authenticatedFetch('/api/admin/approvals?status=pending'),
+          authenticatedFetch('/api/admin/level2-cert-approvals?status=pending'),
+          authenticatedFetch('/api/admin/level5-exam-approvals?status=pending'),
+        ])
+
+        const [userApprovals, level2Approvals, level5Approvals] = await Promise.all([
+          userRes.ok ? userRes.json() : [],
+          level2Res.ok ? level2Res.json() : [],
+          level5Res.ok ? level5Res.json() : [],
+        ])
+
+        const counts = {
+          userPending: userApprovals.length,
+          level2Cert: level2Approvals.length,
+          level5Exam: level5Approvals.length,
+        }
+
+        setApprovalCounts(counts)
+        setPendingCount(counts.userPending + counts.level2Cert + counts.level5Exam)
+      } catch (e) {
+        console.warn('Failed to fetch approval counts:', e)
+      }
+    }
+
+    fetchAllCounts()
+  }, [user]) // re-runs when auth resolves
 
   const handleSignOut = async () => {
     await signOutUser()
@@ -256,9 +329,27 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   const TABS = [
     { key: 'overview' as ActiveTab, label: 'Dashboard', href: '/admin',          icon: <IconDashboard /> },
+    { key: 'approvals' as ActiveTab, label: 'Approvals', href: '/admin/approvals', icon: <IconApprovals />, hasDropdown: true },
     { key: 'users'    as ActiveTab, label: 'Users',     href: '/admin/users',    icon: <IconUsers /> },
     { key: 'admins'   as ActiveTab, label: 'Admins',    href: '/admin/admins',   icon: <IconAdmins /> },
-    { key: 'settings' as ActiveTab, label: 'Settings',  href: '/admin/settings', icon: <IconSettings /> },
+    { key: 'settings' as ActiveTab, label: 'Settings',  href: '/admin/settings', icon: <IconSettings />, hasDropdown: true },
+    { key: 'logs'     as ActiveTab, label: 'Logs',      href: '/admin/logs',     icon: <IconLogs /> },
+  ]
+
+  const approvalsSubTabs = [
+    { key: 'user-pending' as ApprovalsSubTab, label: 'User Pending', href: '/admin/approvals/user-pending' },
+    { key: 'level2-cert' as ApprovalsSubTab, label: 'Level 2 Cert', href: '/admin/approvals/level2-cert' },
+    { key: 'level5-exam' as ApprovalsSubTab, label: 'Level 5 Exam', href: '/admin/approvals/level5-exam' },
+  ]
+
+  const settingsSubTabs = [
+    { key: 'level1' as SettingsSubTab, label: 'Level 1', href: '/admin/settings/level1' },
+    { key: 'level2' as SettingsSubTab, label: 'Level 2', href: '/admin/settings/level2' },
+    { key: 'level3' as SettingsSubTab, label: 'Level 3', href: '/admin/settings/level3' },
+    { key: 'level4' as SettingsSubTab, label: 'Level 4', href: '/admin/settings/level4' },
+    { key: 'level5' as SettingsSubTab, label: 'Level 5', href: '/admin/settings/level5' },
+    { key: 'level6' as SettingsSubTab, label: 'Level 6', href: '/admin/settings/level6' },
+    { key: 'level7' as SettingsSubTab, label: 'Level 7', href: '/admin/settings/level7' },
   ]
 
   if (loading) return (
@@ -314,25 +405,104 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
           {/* Nav items */}
           <nav className="p-3 space-y-1 flex-shrink-0">
-            {TABS.map(t => (
-              <button
-                key={t.key}
-                onClick={() => router.push(t.href)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-semibold transition ${
-                  activeTab === t.key
-                    ? 'bg-blue-900 text-white'
-                    : 'text-gray-600 hover:bg-gray-100'
-                }`}
-              >
-                <span className={activeTab === t.key ? 'text-white' : 'text-gray-400'}>{t.icon}</span>
-                {t.label}
-                {t.key === 'overview' && pendingCount > 0 && (
-                  <span className="ml-auto bg-gray-500 text-white text-[10px] px-2 py-0.5 rounded-full">
-                    {pendingCount}
-                  </span>
-                )}
-              </button>
-            ))}
+            {TABS.map(t => {
+              if (t.hasDropdown) {
+                const isOpen = t.key === 'approvals' ? approvalsOpen : settingsOpen
+                const subTabs = t.key === 'approvals' ? approvalsSubTabs : settingsSubTabs
+                
+                return (
+                  <div key={t.key} className="space-y-1">
+                    <button
+                      onClick={() => {
+                        if (t.key === 'approvals') {
+                          setApprovalsOpen(!approvalsOpen)
+                          setSettingsOpen(false)
+                        } else {
+                          setSettingsOpen(!settingsOpen)
+                          setApprovalsOpen(false)
+                        }
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-semibold transition ${
+                        activeTab === t.key
+                          ? 'bg-blue-900 text-white'
+                          : 'text-gray-600 hover:bg-gray-100'
+                      }`}
+                    >
+                      <span className={activeTab === t.key ? 'text-white' : 'text-gray-400'}>{t.icon}</span>
+                      {t.label}
+                      <svg
+                        className={`w-3 h-3 ml-auto transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                      {t.key === 'approvals' && !approvalsOpen && pendingCount > 0 && (
+                        <span className="bg-yellow-500 text-white text-[10px] px-2 py-0.5 rounded-full">
+                          {pendingCount}
+                        </span>
+                      )}
+                    </button>
+                    
+                    {isOpen && (
+                      <div className="ml-4 space-y-1">
+                        {subTabs.map(sub => {
+                          const getSubCount = (subKey: string) => {
+                            switch (subKey) {
+                              case 'user-pending': return approvalCounts.userPending
+                              case 'level2-cert': return approvalCounts.level2Cert
+                              case 'level5-exam': return approvalCounts.level5Exam
+                              default: return 0
+                            }
+                          }
+                          const count = getSubCount(sub.key)
+                          
+                          return (
+                            <button
+                              key={sub.key}
+                              onClick={() => router.push(sub.href)}
+                              className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg text-sm font-medium transition ${
+                                pathname === sub.href
+                                  ? 'bg-blue-100 text-blue-900'
+                                  : 'text-gray-500 hover:bg-gray-50'
+                              }`}
+                            >
+                              {sub.label}
+                              {count > 0 && (
+                                <span className="bg-yellow-500 text-white text-[10px] px-2 py-0.5 rounded-full ml-auto">
+                                  {count}
+                                </span>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              }
+              
+              return (
+                <button
+                  key={t.key}
+                  onClick={() => {
+                    router.push(t.href)
+                    setApprovalsOpen(false)
+                    setSettingsOpen(false)
+                  }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-semibold transition ${
+                    activeTab === t.key
+                      ? 'bg-blue-900 text-white'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <span className={activeTab === t.key ? 'text-white' : 'text-gray-400'}>{t.icon}</span>
+                  {t.label}
+                </button>
+              )
+            })}
           </nav>
 
           {/* ── Mobile: profile appears right below nav ── */}
@@ -376,7 +546,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           )}
         </header>
 
-        <main className="flex-1 min-h-0 overflow-hidden">
+        <main className="flex-1 min-h-0 overflow-auto lg:overflow-hidden">
           {children}
         </main>
       </div>

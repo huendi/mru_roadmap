@@ -1,34 +1,17 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { onAuthStateChange } from '@/lib/auth'
+import { authenticatedFetch } from '@/lib/api'
 import { getNextUnlockedLevel, getLevelProgress, LEVELS_DATA, LEVEL_REQUIREMENTS } from '@/lib/levels'
 import { User, Level } from '@/types'
 import Navbar from '@/components/Navbar'
 
-const FORMS_CONFIG = {
-  ca: {
-    title: 'Certificate of Authority CA License Application Form',
-    src: '/forms/Certificate-of-Authority-CA-License-Application-Form-Quick-Quide.pdf',
-    file: 'Certificate-of-Authority-CA-License-Application-Form-Quick-Quide.pdf',
-    iconColor: 'blue',
-  },
-  life: {
-    title: 'Life CA Application Form',
-    src: '/forms/LIFE-CA-APPLICATION-FORM.pdf',
-    file: 'LIFE-CA-APPLICATION-FORM.pdf',
-    iconColor: 'green',
-  },
-  vul: {
-    title: 'VUL CA Application Form',
-    src: '/forms/VUL-CA-APPLICATION-FORM.pdf',
-    file: 'VUL-CA-APPLICATION-FORM.pdf',
-    iconColor: 'purple',
-  },
-} as const
-
-type FormKey = keyof typeof FORMS_CONFIG
+// Helper function to safely check if user has sufficient progress
+const hasUserProgress = (user: User | null, minLevel: number): boolean => {
+  return user ? user.currentLevel >= minLevel : false
+}
 
 // Level 2 has 3 steps: Training Guide (33.33%), SLTC Link (33.33%), Certificate Upload (33.34%)
 function getLevel2Progress(requirements: string[], hasCertificate: boolean, certStatus?: string): number {
@@ -60,11 +43,38 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [level1Documents, setLevel1Documents] = useState(0)
-  const [showFormModal, setShowFormModal] = useState<FormKey | null>(null)
   const [level4Progress, setLevel4Progress] = useState(0)
   const [level1TotalDocs, setLevel1TotalDocs] = useState(7)
   const [level1MinDocsToPass, setLevel1MinDocsToPass] = useState(4)
   const [level2Cert, setLevel2Cert] = useState<any | null>(null)
+  const [level5Progress, setLevel5Progress] = useState<any | null>(null)
+  const [level4ExamUpdate, setLevel4ExamUpdate] = useState<any | null>(null)
+  const [notificationPolling, setNotificationPolling] = useState(false)
+  const notificationIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const [levelProgressLoaded, setLevelProgressLoaded] = useState(false)
+
+  const fetchUnifiedLevelProgress = useCallback(async () => {
+    if (!user) return
+    try {
+      const res = await authenticatedFetch('/api/user/level-progress')
+      if (!res.ok) return
+      const data = await res.json()
+
+      if (typeof data?.level1?.docsCount === 'number') setLevel1Documents(data.level1.docsCount)
+      if (typeof data?.level1?.totalDocs === 'number') setLevel1TotalDocs(data.level1.totalDocs)
+      if (typeof data?.level1?.minDocsToPass === 'number') setLevel1MinDocsToPass(data.level1.minDocsToPass)
+      if (typeof data?.level4?.progress === 'number') setLevel4Progress(data.level4.progress)
+      if (data?.level2?.certificateStatus) {
+        setLevel2Cert({ status: data.level2.certificateStatus, level: 2, type: 'certificate' })
+      } else {
+        setLevel2Cert(null)
+      }
+      if (data?.level5?.raw) setLevel5Progress(data.level5.raw)
+      setLevelProgressLoaded(true)
+    } catch (e) {
+      console.error('Failed to fetch unified level progress', e)
+    }
+  }, [user])
 
   useEffect(() => {
     const unsubscribe = onAuthStateChange((userData) => {
@@ -102,97 +112,90 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (user) {
-      fetchLevel1Documents(user.uid, user)
+      fetchUnifiedLevelProgress()
     }
-  }, [user])
+  }, [user?.uid, fetchUnifiedLevelProgress])
 
   useEffect(() => {
-    if (user) updateLevels(user, level1Documents, level1TotalDocs, level1MinDocsToPass, level2Cert)
-  }, [level4Progress, level2Cert])
+    if (user) {
+      console.log('🔍 updateLevels triggered:', {
+        userCurrentLevel: user.currentLevel,
+        userRequirements: user.requirementsCompleted,
+        level1Documents,
+        level4Progress,
+        level2Cert,
+        level5Progress
+      })
+      updateLevels(user, level1Documents, level1TotalDocs, level1MinDocsToPass, level2Cert)
+    }
+  }, [level4Progress, level2Cert, level5Progress, level1Documents, user?.currentLevel, user?.requirementsCompleted])
 
-  useEffect(() => {
-  if (!user) return
-  const fetchLevel4Progress = async () => {
+  // ── Real-time notification polling ───────────────────────────────────────────
+const pollNotifications = useCallback(async (silent = false) => {
+    if (!user) return
+    if (!silent) setNotificationPolling(true)
     try {
-      const res = await fetch(`/api/user/level4-exams?uid=${user.uid}`)
-      if (res.ok) {
-        const data = await res.json()
-        const exams: Array<{ passed: boolean; attempts: any[] }> = data.exams || []
-        const totalSets = data.totalSets || 0
-        
-        // Use same progress calculation as Level 4 page
-        const pct = totalSets > 0
-          ? Math.round(
-              exams.reduce((sum, r) => {
-                if (r.passed) return sum + (100 / totalSets)
-                if (r.attempts.length > 0) return sum + (100 / totalSets / 2)
-                return sum
-              }, 0)
-            )
-          : 0
-        setLevel4Progress(pct)
+      await fetchUnifiedLevelProgress()
+
+      const level4Res = await authenticatedFetch('/api/user/level4-exam-updates')
+      if (level4Res.ok) {
+        const level4Data = await level4Res.json()
+        setLevel4ExamUpdate(level4Data)
+      }
+
+      const profileRes = await authenticatedFetch('/api/user/profile')
+      if (profileRes.ok) {
+        const profileData = await profileRes.json()
+        setUser(prev => prev ? {
+          ...prev,
+          requirementsCompleted: profileData.user?.requirementsCompleted ?? prev.requirementsCompleted,
+          currentLevel: profileData.user?.currentLevel ?? prev.currentLevel,
+        } : prev)
       }
     } catch (e) {
-      console.error('Failed to fetch level4 progress', e)
+      console.error('Failed to poll notifications:', e)
+    } finally {
+      setNotificationPolling(false)
     }
-  }
-  fetchLevel4Progress()
-}, [user])
+  }, [user, fetchUnifiedLevelProgress])
 
-  const fetchLevel1Documents = async (uid: string, userData: User) => {
-    try {
-      const [docsRes, settingsRes, reqRes] = await Promise.all([
-        fetch(`/api/user/documents?uid=${uid}`),
-        fetch('/api/admin/level1-settings'),
-        fetch(`/api/user/profile?uid=${uid}`),   // ✅ fetch all three in parallel
-      ])
-
-      let docCount = 0
-      let level2Certificate = null
-      if (docsRes.ok) {
-        const allDocuments = await docsRes.json()
-        docCount = allDocuments.filter((doc: any) => doc.level === 1).length
-        setLevel1Documents(docCount)
-        
-        // Get Level 2 certificate
-        level2Certificate = allDocuments.find((doc: any) => doc.level === 2)
-        setLevel2Cert(level2Certificate)
+  // Start polling when user is loaded
+  useEffect(() => {
+    if (!user?.uid) return
+    
+    pollNotifications(false)
+    notificationIntervalRef.current = setInterval(() => pollNotifications(true), 10_000)
+    
+    return () => {
+      if (notificationIntervalRef.current) {
+        clearInterval(notificationIntervalRef.current)
       }
-
-      let totalDocs = 7
-      let minDocsToPass = 4
-      if (settingsRes.ok) {
-        const s = await settingsRes.json()
-        totalDocs = s.requirements?.length ?? s.totalDocs ?? 7
-        minDocsToPass = s.minDocsToPass ?? 4
-        setLevel1TotalDocs(totalDocs)
-        setLevel1MinDocsToPass(minDocsToPass)
-      }
-
-      // ✅ Build freshUser from the parallel profile fetch — no artificial delay
-      let freshUser = userData
-      if (reqRes.ok) {
-        const profileData = await reqRes.json()
-        freshUser = {
-          ...userData,
-          requirementsCompleted: profileData.user?.requirementsCompleted ?? userData.requirementsCompleted,
-        }
-        // Update user state with latest requirements
-        setUser(freshUser)
-      }
-
-      updateLevels(freshUser, docCount, totalDocs, minDocsToPass, level2Certificate)
-    } catch (error) {
-      console.error('Error fetching Level 1 documents:', error)
     }
-  }
+  }, [user?.uid])
+
+  useEffect(() => {
+    if (!user || levelProgressLoaded) return
+    fetchUnifiedLevelProgress()
+  }, [user?.uid, levelProgressLoaded, fetchUnifiedLevelProgress])
 
   const updateLevels = (userData: User, docCount?: number, totalDocs?: number, minDocsToPass?: number, level2Certificate?: any) => {
-    const requirements = userData.requirementsCompleted || []
+    // Preserve existing requirements if the user data is corrupted
+    const existingRequirements = user?.requirementsCompleted || []
+    const newRequirements = userData.requirementsCompleted || []
+    const requirements = newRequirements.length > 0 ? newRequirements : existingRequirements
+    
     const advisorType = userData.advisorType
-    const count = docCount ?? level1Documents   // ← already correct, keep as-is
+    // Defensive: ensure we never lose the document count if it's already been fetched
+    const count = docCount !== undefined ? docCount : level1Documents
     const total = totalDocs ?? level1TotalDocs
     const minPass = minDocsToPass ?? level1MinDocsToPass
+    
+    console.log('🔍 updateLevels requirements:', {
+      existingRequirements,
+      newRequirements,
+      finalRequirements: requirements,
+      level1Documents: count
+    })
 
     // Pass 1: compute progress + isUnlocked only
     const levelsWithProgress = LEVELS_DATA.map((level) => {
@@ -206,9 +209,10 @@ export default function DashboardPage() {
       let isUnlocked = level.id <= getNextUnlockedLevel(
         userData.currentLevel,
         requirements,
-        level1Documents,
+        count,         
         advisorType,
-        minPass
+        minPass,
+        level5Progress
       )
       
       // For returnee advisors, if level 2 is completed, unlock level 6
@@ -224,20 +228,43 @@ export default function DashboardPage() {
       let progress: number
 
       if (level.id === 1) {
-        // Progress is based on total documents uploaded out of total available documents
-        const docProgress = (Math.min(count, total) / total) * 100
-        progress = Math.round(docProgress)
+        progress = Math.round((Math.min(count, total) / total) * 100)
       } else if (level.id === 2) {
-        const hasLevel2Cert = !!level2Certificate
-        const certStatus = level2Certificate?.status
+        let hasLevel2Cert = !!level2Certificate
+        let certStatus = level2Certificate?.status
+        if (!hasLevel2Cert && requirements.includes('sltc_link_clicked') && requirements.includes('training_guide_completed')) {
+          hasLevel2Cert = true
+          certStatus = 'approved'
+        }
         progress = getLevel2Progress(requirements, hasLevel2Cert, certStatus)
       } else if (level.id === 3) {
         progress = getLevel3Progress(requirements)
       } else if (level.id === 4) {
-        progress = level4Progress
+        progress = typeof level4Progress === 'number' ? level4Progress : 0
+      } else if (level.id === 5) {
+        if (level5Progress) {
+          const currentStep = level5Progress.currentStep || 0
+          if (level5Progress.adminDecision === 'passed') {
+            progress = 100
+          } else if (level5Progress.receiptUploaded || currentStep >= 4) {
+            progress = 75
+          } else if (level5Progress.scheduleId || currentStep >= 3) {
+            progress = 50
+          } else if (level5Progress.examType || currentStep >= 2) {
+            progress = 25
+          } else if (currentStep >= 1) {
+            progress = 10
+          } else {
+            progress = 0
+          }
+        } else {
+          progress = 0
+        }
       } else {
         progress = getLevelProgress(level.id, requirements)
       }
+
+      progress = typeof progress === 'number' && !isNaN(progress) ? progress : 0
 
       return { ...level, isUnlocked, progress }
     })
@@ -297,7 +324,6 @@ export default function DashboardPage() {
 
   const overallProgress = Math.round((user.currentLevel / 7) * 100)
   const fullName = user.name || user.displayName || user.email.split('@')[0]
-  const activeForm = showFormModal ? FORMS_CONFIG[showFormModal] : null
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-yellow-50 to-amber-100">
@@ -344,51 +370,157 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Downloadable Forms */}
+            {/* Notifications */}
             <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 border border-gray-200">
-              <h3 className="text-base sm:text-lg font-bold text-gray-900 mb-3 sm:mb-4">Downloadable Forms</h3>
-              <div className="space-y-2 sm:space-y-3">
-
-                <button
-                  onClick={() => setShowFormModal('ca')}
-                  className="w-full flex items-center gap-3 p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-left"
-                >
-                  <div className="w-8 h-8 rounded-md bg-blue-50 flex items-center justify-center flex-shrink-0">
-                    <svg className="w-4 h-4 text-blue-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                    </svg>
+              <div className="flex items-center justify-between mb-3 sm:mb-4">
+                <h3 className="text-base sm:text-lg font-bold text-gray-900">Notifications</h3>
+                {notificationPolling && (
+                  <div className="flex items-center gap-1 text-xs text-green-600">
+                    <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+                    Syncing...
                   </div>
-                  <span className="text-xs sm:text-sm text-gray-700 flex-1 leading-snug">
-                    Certificate of Authority CA License Application Form
-                  </span>
-                  <span className="text-xs font-medium px-2 py-0.5 rounded bg-blue-50 text-blue-800 flex-shrink-0">View</span>
-                </button>
-
-                <button
-                  onClick={() => setShowFormModal('life')}
-                  className="w-full flex items-center gap-3 p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-left"
-                >
-                  <div className="w-8 h-8 rounded-md bg-green-50 flex items-center justify-center flex-shrink-0">
-                    <svg className="w-4 h-4 text-green-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                    </svg>
+                )}
+              </div>
+              <div className="space-y-3">
+                
+                {/* Level 2 Certificate Decision - show only final decision */}
+                {hasUserProgress(user, 2) && level2Cert && (level2Cert?.status === 'approved' || level2Cert?.status === 'rejected') && (
+                  <div className="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 ${
+                        level2Cert?.status === 'approved' ? 'bg-green-50' :
+                        level2Cert?.status === 'rejected' ? 'bg-red-50' : 'bg-blue-50'
+                      }`}>
+                        <svg className={`w-4 h-4 ${
+                          level2Cert?.status === 'approved' ? 'text-green-700' :
+                          level2Cert?.status === 'rejected' ? 'text-red-700' : 'text-blue-700'
+                        }`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="text-xs sm:text-sm font-medium text-gray-900">Level 2 Certificate</p>
+                        <p className="text-xs text-gray-500">Certificate review decision</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-bold px-2 py-1 rounded flex-shrink-0 ${
+                        level2Cert?.status === 'approved' ? 'text-green-700' :
+                        level2Cert?.status === 'rejected' ? 'text-red-700' : 'text-blue-800'
+                      }`}>
+                        {level2Cert?.status === 'approved' ? 'Approved' :
+                         level2Cert?.status === 'rejected' ? 'Rejected' : 'Pending'}
+                      </span>
+                      <button
+                        onClick={() => router.push('/level/2')}
+                        className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                      >
+                        View
+                      </button>
+                    </div>
                   </div>
-                  <span className="text-xs sm:text-sm text-gray-700 flex-1 leading-snug">Life CA Application Form</span>
-                  <span className="text-xs font-medium px-2 py-0.5 rounded bg-green-50 text-green-800 flex-shrink-0">View</span>
-                </button>
+                )}
 
-                <button
-                  onClick={() => setShowFormModal('vul')}
-                  className="w-full flex items-center gap-3 p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-left"
-                >
-                  <div className="w-8 h-8 rounded-md bg-purple-50 flex items-center justify-center flex-shrink-0">
-                    <svg className="w-4 h-4 text-purple-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                    </svg>
+                {/* Level 5 Exam Decision - show final decision and pending */}
+                {hasUserProgress(user, 4) && level5Progress && (level5Progress.adminDecision === 'passed' || level5Progress.adminDecision === 'failed' || level5Progress.adminDecision === 'pending') && (
+                  <div className="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 ${
+                        level5Progress.adminDecision === 'passed' ? 'bg-green-50' :
+                        level5Progress.adminDecision === 'failed' ? 'bg-red-50' :
+                        level5Progress.adminDecision === 'pending' ? 'bg-blue-50' : 'bg-gray-50'
+                      }`}>
+                        <svg className={`w-4 h-4 ${
+                          level5Progress.adminDecision === 'passed' ? 'text-green-700' :
+                          level5Progress.adminDecision === 'failed' ? 'text-red-700' :
+                          level5Progress.adminDecision === 'pending' ? 'text-blue-700' : 'text-gray-700'
+                        }`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="text-xs sm:text-sm font-medium text-gray-900">Level 5 Exam</p>
+                        <p className="text-xs text-gray-500">
+                          Licensure exam final result
+                          {level5Progress.examScore && (
+                            <span className="ml-1 font-medium">
+                              - {level5Progress.examScore}%
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-bold px-2 py-1 rounded flex-shrink-0 ${
+                        level5Progress.adminDecision === 'passed' ? 'text-green-700' :
+                        level5Progress.adminDecision === 'failed' ? 'text-red-700' :
+                        level5Progress.adminDecision === 'pending' ? 'text-blue-800' :
+                        (level5Progress.currentStep && level5Progress.currentStep >= 1) ? 'text-orange-800' : 'text-gray-800'
+                      }`}>
+                        {level5Progress.adminDecision === 'passed' ? 'Passed' : 
+                         level5Progress.adminDecision === 'failed' ? 'Failed' : 'Pending'}
+                      </span>
+                      {level5Progress.examScore && level5Progress.adminDecision !== 'pending' && (
+                        <span className={`text-xs font-bold px-2 py-1 rounded flex-shrink-0 ${
+                          level5Progress.examScore >= 75 ? 'bg-green-100 text-green-800' :
+                          level5Progress.examScore >= 50 ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-red-100 text-red-800'
+                        }`}>
+                          {level5Progress.examScore}%
+                        </span>
+                      )}
+                      <button
+                        onClick={() => router.push('/level/5')}
+                        className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                      >
+                        View
+                      </button>
+                    </div>
                   </div>
-                  <span className="text-xs sm:text-sm text-gray-700 flex-1 leading-snug">VUL CA Application Form</span>
-                  <span className="text-xs font-medium px-2 py-0.5 rounded bg-purple-50 text-purple-800 flex-shrink-0">View</span>
-                </button>
+                )}
+
+                {/* Level 4 Exam Update Notification - Only show if user is level 4+ and has exam updates */}
+                {hasUserProgress(user, 4) && level4ExamUpdate && level4ExamUpdate.hasUpdate && (
+                  <div className="flex items-center justify-between p-3 border border-orange-200 rounded-lg bg-orange-50">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 bg-orange-100">
+                        <svg className="w-4 h-4 text-orange-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 15.5c-.77.833.192 2.5 1.732 2.5z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="text-xs sm:text-sm font-medium text-gray-900">Level 4 Exam Updated</p>
+                        <p className="text-xs text-gray-500">New questions uploaded by admin</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold px-2 py-1 rounded flex-shrink-0 text-orange-800 bg-orange-100">
+                        Reset Required
+                      </span>
+                      <button
+                        onClick={() => router.push('/level/4')}
+                        className="text-xs px-3 py-1 bg-orange-600 text-white rounded hover:bg-orange-700 transition-colors"
+                      >
+                        View
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Empty state when no notifications */}
+                {(!hasUserProgress(user, 2) || !level2Cert || (level2Cert.status !== 'approved' && level2Cert.status !== 'rejected')) &&
+                 (!level5Progress || !hasUserProgress(user, 4) || (level5Progress.adminDecision !== 'passed' && level5Progress.adminDecision !== 'failed' && level5Progress.adminDecision !== 'pending')) &&
+                 (!level4ExamUpdate || !level4ExamUpdate.hasUpdate) && (
+                  <div className="text-center py-8">
+                    <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-3">
+                      <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                      </svg>
+                    </div>
+                    <p className="text-sm text-gray-500 font-medium">No notifications</p>
+                    <p className="text-xs text-gray-400 mt-1">Complete levels to see status updates here</p>
+                  </div>
+                )}
 
               </div>
             </div>
@@ -407,9 +539,9 @@ export default function DashboardPage() {
                     disabled={!level.isUnlocked}
                     className={`p-3 sm:p-4 rounded-lg text-left transition-colors ${
                       level.isUnlocked
-                        ? level.isCompleted
-                          ? 'bg-green-50 border-2 border-green-200 text-green-800 hover:bg-green-100'
-                          : 'bg-blue-50 border-2 border-blue-200 text-blue-800 hover:bg-blue-100'
+                        ? level.progress === 100
+                          ? 'bg-blue-50 border-2 border-blue-200 text-blue-800 hover:bg-blue-100'
+                          : 'bg-green-50 border-2 border-green-200 text-green-800 hover:bg-green-100'
                         : (level as any).skipped
                           ? 'bg-blue-50 border-2 border-blue-200 text-blue-600 cursor-not-allowed'
                           : 'bg-gray-50 border-2 border-gray-200 text-gray-400 cursor-not-allowed'
@@ -423,7 +555,7 @@ export default function DashboardPage() {
 
                       {level.isUnlocked && level.progress !== undefined && (
                         <span className={`text-sm font-bold flex-shrink-0 ${
-                          level.isCompleted ? 'text-green-600' : 'text-blue-600'
+                          level.progress === 100 ? 'text-blue-600' : 'text-green-600'
                         }`}>
                           {level.progress}%
                         </span>
@@ -447,7 +579,7 @@ export default function DashboardPage() {
                       <div className="mt-2 w-full bg-gray-200 rounded-full h-1">
                         <div
                           className={`h-1 rounded-full transition-all duration-300 ${
-                            level.isCompleted ? 'bg-green-500' : 'bg-blue-500'
+                            level.progress === 100 ? 'bg-blue-500' : 'bg-green-500'
                           }`}
                           style={{ width: `${level.progress}%` }}
                         />
@@ -461,56 +593,6 @@ export default function DashboardPage() {
         </div>
       </main>
 
-      {/* Form Modal */}
-      {activeForm && (
-        <div
-          className="fixed inset-0 bg-black/45 z-50 flex items-center justify-center p-3 sm:p-4"
-          onClick={(e) => { if (e.target === e.currentTarget) setShowFormModal(null) }}
-        >
-          <div
-            className="bg-white rounded-xl border border-gray-200 w-full max-w-5xl flex flex-col p-4 sm:p-5"
-            style={{ height: '90vh', maxHeight: '90vh' }}
-          >
-            <div className="flex items-start justify-between mb-3 sm:mb-4 flex-shrink-0">
-              <p className="text-xs sm:text-sm font-medium text-gray-900 flex-1 pr-3 leading-snug">
-                {activeForm.title}
-              </p>
-              <button
-                onClick={() => setShowFormModal(null)}
-                className="w-7 h-7 rounded-md border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50 flex-shrink-0"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <div className="rounded-lg overflow-hidden mb-3 sm:mb-4 border border-gray-200 flex-1">
-              <iframe
-                src={`${activeForm.src}#toolbar=1&navpanes=0`}
-                className="w-full h-full"
-                title={activeForm.title}
-              />
-            </div>
-
-            <button
-              onClick={() => {
-                const link = document.createElement('a')
-                link.href = activeForm.src
-                link.download = activeForm.file
-                link.click()
-                setShowFormModal(null)
-              }}
-              className="w-full flex items-center justify-center gap-2 bg-green-700 hover:bg-green-800 text-white text-sm font-medium py-2.5 rounded-lg transition-colors flex-shrink-0"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-              Download
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

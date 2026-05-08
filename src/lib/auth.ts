@@ -38,8 +38,8 @@ export const getAuthErrorMessage = (error: any): string => {
   return AUTH_ERROR_MESSAGES[error.code] || error.message || 'An error occurred. Please try again.'
 }
 
-export const isAdmin = (email: string): boolean => {
-  return ADMIN_EMAILS.includes(email)
+export const isAdmin = (user: User | null): boolean => {
+  return user?.role === 'admin'
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -83,14 +83,18 @@ export const signInWithGoogle = async (): Promise<User> => {
       return existing
     }
 
+    // For new Google users, check if email is in hardcoded admin list for initial setup
+    // The role will be properly updated from Firestore after user creation
+    const isInitialAdmin = ADMIN_EMAILS.includes(firebaseUser.email || '')
+    
     // Truly new user — create pending record
     const newUser: User = {
       uid: firebaseUser.uid,
       email: firebaseUser.email || '',
       displayName: firebaseUser.displayName || '',
       photoURL: firebaseUser.photoURL || '',
-      role: isAdmin(firebaseUser.email || '') ? 'admin' : 'user',
-      status: isAdmin(firebaseUser.email || '') ? 'approved' : 'pending',
+      role: isInitialAdmin ? 'admin' : 'user',
+      status: isInitialAdmin ? 'approved' : 'pending',
       hasPassword: false,
       currentLevel: 1,
       requirementsCompleted: [],
@@ -147,8 +151,10 @@ export const signUp = async (email: string, password: string, additionalData?: P
 export const createOrUpdateUser = async (firebaseUser: FirebaseUser, additionalData?: Partial<User>): Promise<User> => {
   const userRef = doc(db, 'users', firebaseUser.uid)
   const userDoc = await getDoc(userRef)
-  const isUserAdmin = isAdmin(firebaseUser.email || '')
   const existingData = userDoc.data()
+  
+  // For existing users, check their role from Firestore
+  const isUserAdmin = existingData?.role === 'admin'
 
   const userData: User = {
     uid: firebaseUser.uid,
@@ -263,10 +269,53 @@ export const updateUserProfile = async (uid: string, data: Partial<User>): Promi
 // ─────────────────────────────────────────────────────────────
 export const updateUserStatus = async (
   uid: string,
-  status: 'pending' | 'approved' | 'rejected' | 'active' | 'disabled'
+  status: 'pending' | 'approved' | 'rejected' | 'active' | 'disabled',
+  adminEmail?: string
 ): Promise<void> => {
   const userRef = doc(db, 'users', uid)
   await updateDoc(userRef, { status, updatedAt: new Date() })
+  
+  // Log the admin action if admin email is provided
+  if (adminEmail) {
+    try {
+      // Get user details for logging
+      const userDoc = await getDoc(userRef)
+      const userData = userDoc.data() as User
+      const targetUserEmail = userData?.email || 'Unknown'
+      const targetUserName = userData?.name || userData?.displayName || targetUserEmail
+      
+      // Determine activity and action
+      let activity = 'Account Status Update'
+      let action = status.charAt(0).toUpperCase() + status.slice(1)
+      
+      if (status === 'approved') {
+        activity = 'Account Approval Request'
+        action = 'Approved'
+      } else if (status === 'rejected') {
+        activity = 'Account Approval Request'
+        action = 'Rejected'
+      } else if (status === 'disabled') {
+        activity = 'User Account Management'
+        action = 'Disabled'
+      } else if (status === 'active') {
+        activity = 'User Account Management'
+        action = 'Enabled'
+      }
+      
+      // Create log entry using helper function
+      const { createAdminLog } = await import('./admin-logs')
+      await createAdminLog(
+        adminEmail,                    // actorName (admin identifier - could be email or display name)
+        targetUserName,                // targetUserName
+        activity,                      // activity
+        action,                        // action
+        targetUserEmail                // targetUserEmail
+      )
+    } catch (logError) {
+      console.warn('Failed to create admin log for status update:', logError)
+      // Continue even if logging fails
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -326,12 +375,12 @@ export const signOutUser = async (): Promise<void> => {
 // ─────────────────────────────────────────────────────────────
 // Delete User (via API)
 // ─────────────────────────────────────────────────────────────
-export const deleteUser = async (uid: string): Promise<void> => {
+export const deleteUser = async (uid: string, adminEmail?: string): Promise<void> => {
   try {
     const response = await fetch('/api/admin/delete-user', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uid }),
+      body: JSON.stringify({ uid, adminEmail }),
     })
 
     if (!response.ok) {

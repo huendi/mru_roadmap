@@ -11,17 +11,19 @@ export const uploadBufferToCloudinary = async (
     api_secret: process.env.CLOUDINARY_API_SECRET,
   })
 
-  // Use the original fileName as the Cloudinary public_id
-  // so it matches what is displayed in the exam history list
+  // Generate unique public_id to avoid corruption from overwrites
+  const timestamp = Date.now()
   const cleanName = fileName.replace(/\s+/g, '_').replace(/\.docx$/i, '')
+  const uniquePublicId = `${cleanName}_${timestamp}`
 
   return await new Promise<any>((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       {
-        resource_type: 'raw', // for docx
+        resource_type: 'auto', // Let Cloudinary detect the resource type
         folder: 'question_uploads',
-        public_id: cleanName,
-        overwrite: true, // replace if same name is re-uploaded
+        public_id: uniquePublicId,
+        overwrite: false, // Prevent overwrites to avoid corruption
+        format: 'docx', // Ensure format is preserved
       },
       (error, result) => {
         if (error) reject(error)
@@ -29,6 +31,7 @@ export const uploadBufferToCloudinary = async (
       }
     )
 
-    stream.end(buffer)
+    stream.write(buffer)
+    stream.end()
   })
 }

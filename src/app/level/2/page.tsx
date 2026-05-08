@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { onAuthStateChange } from '@/lib/auth'
+import { authenticatedFetch } from '@/lib/api'
 import { uploadToCloudinary } from '@/lib/cloudinary'
 import { User } from '@/types'
 import Navbar from '@/components/Navbar'
@@ -164,7 +165,7 @@ export default function Level2Page() {
       if (!userData.profileCompleted) { router.push('/complete-profile'); return }
 
       try {
-        const res = await fetch(`/api/user/documents?uid=${userData.uid}`)
+        const res = await authenticatedFetch('/api/user/documents')
         if (res.ok) {
           const allDocs = await res.json()
           const level1Docs = allDocs.filter((doc: any) => doc.level === 1)
@@ -471,7 +472,7 @@ export default function Level2Page() {
               : (
                 <div className="bg-white rounded-xl shadow-lg overflow-hidden">
                   <div className="px-6 py-4 border-b border-gray-100">
-                    <h3 className="text-base font-semibold text-gray-900">📋 How to Complete the Training</h3>
+                    <h3 className="text-base font-semibold text-gray-900">How to Complete the Training</h3>
                     <p className="text-xs text-gray-400 mt-0.5">Step-by-step photo guide</p>
                   </div>
                   <div className="flex flex-col items-center justify-center bg-gray-50 py-16 px-6 text-center">
@@ -527,6 +528,24 @@ export default function Level2Page() {
                   </svg>
                   Open
                 </a>
+              </div>
+
+              {/* Important notice about SLTC access */}
+              <div className="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <div className="flex items-start gap-2">
+                  <div className="w-6 h-6 bg-amber-500 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-amber-800 mb-1">Important Notice</p>
+                    <ul className="text-xs text-amber-700 space-y-1">
+                      <li>• <strong>Weekend Access:</strong> The SLTC training link is not accessible on weekends (Saturday & Sunday)</li>
+                      <li>• <strong>Account Access:</strong> Training accounts are only valid for 10 days. After expiration, you need to contact your manager to reactivate the account.</li>
+                    </ul>
+                  </div>
+                </div>
               </div>
             </div>
 

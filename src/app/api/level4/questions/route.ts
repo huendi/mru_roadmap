@@ -22,45 +22,76 @@ function shuffleArray<T>(arr: T[]): T[] {
 export async function GET(req: NextRequest) {
   try {
     const searchParams = req.nextUrl.searchParams
-    const examId = Number(searchParams.get('examId'))
+    const examTypeId = searchParams.get('examTypeId')
+    const setNumber = Number(searchParams.get('set') || '1')
 
-    if (!examId || examId < 1) {
-      return NextResponse.json({ error: 'Invalid examId.' }, { status: 400 })
+    if (!examTypeId) {
+      return NextResponse.json({ error: 'examTypeId required.' }, { status: 400 })
     }
 
-    // Load exam config
-    const configDoc = await adminDb.collection('settings').doc('level4ExamConfig').get()
-    if (!configDoc.exists) {
-      return NextResponse.json({ error: 'Exam config not found.' }, { status: 404 })
-    }
-    const cfg = configDoc.data()!
-    const questionsPerSet: number = cfg.questionsPerSet ?? 50
-
-    // Load all questions sorted by num
-    const snapshot = await adminDb.collection('questions').orderBy('num', 'asc').get()
-    if (snapshot.empty) {
-      return NextResponse.json({ error: 'No questions found.' }, { status: 404 })
+    if (!setNumber || setNumber < 1) {
+      return NextResponse.json({ error: 'Invalid set number.' }, { status: 400 })
     }
 
-    const allQuestions = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    })) as { id: string; num: number; question: string; options: Record<string, string>; answer: string }[]
+    // Load exam type configuration
+    const examTypesDoc = await adminDb.collection('settings').doc('level4ExamTypes').get()
+    if (!examTypesDoc.exists) {
+      console.log('No exam types document found in settings')
+      return NextResponse.json({ error: 'Exam types not found.' }, { status: 404 })
+    }
+    
+    const examTypesData = examTypesDoc.data()!
+    console.log('Available exam types:', Object.keys(examTypesData))
+    console.log('Looking for exam type:', examTypeId)
+    
+    const examTypeConfig = examTypesData[examTypeId]
+    
+    if (!examTypeConfig) {
+      console.log('Exam type not found:', examTypeId)
+      return NextResponse.json({ error: `Exam type '${examTypeId}' not found.` }, { status: 404 })
+    }
+    
+    if (examTypeConfig.isActive === false) {
+      console.log('Exam type is inactive:', examTypeId)
+      return NextResponse.json({ error: 'Exam type is inactive.' }, { status: 404 })
+    }
+
+    const questionsPerSet: number = examTypeConfig.questionsPerSet ?? 50
+
+    // Load questions for this exam type
+    const snapshot = await adminDb.collection('questions')
+      .where('examType', '==', examTypeId)
+      .get()
+
+    console.log(`Found ${snapshot.docs.length} questions for exam type: ${examTypeId}`)
+
+    const allQuestions = snapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .sort((a: any, b: any) => a.num - b.num) as { id: string; num: number; question: string; options: Record<string, string>; answer: string }[]
 
     const total     = allQuestions.length
+    console.log(`Total questions after sorting: ${total}`)
+    
+    if (total === 0) {
+      console.log('No questions found for this exam type')
+      return NextResponse.json({ error: 'No questions found for this exam type. Please upload questions first.' }, { status: 404 })
+    }
+    
     const fullSets  = Math.floor(total / questionsPerSet)
     const remainder = total % questionsPerSet
     const totalSets = fullSets + (remainder > 0 ? 1 : 0)
 
-    if (examId > totalSets) {
-      return NextResponse.json({ error: `Invalid examId. Only ${totalSets} sets available.` }, { status: 400 })
+    console.log(`Questions per set: ${questionsPerSet}, Full sets: ${fullSets}, Remainder: ${remainder}, Total sets: ${totalSets}`)
+
+    if (setNumber > totalSets) {
+      return NextResponse.json({ error: `Invalid set number. Only ${totalSets} sets available.` }, { status: 400 })
     }
 
     let questions: typeof allQuestions = []
 
-    if (examId <= fullSets) {
+    if (setNumber <= fullSets) {
       // Full set — fixed slice
-      const start = (examId - 1) * questionsPerSet
+      const start = (setNumber - 1) * questionsPerSet
       const end   = start + questionsPerSet
       questions   = allQuestions.slice(start, end)
     } else {
@@ -76,7 +107,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       questions,
       total: questions.length,
-      examId,
+      examTypeId,
+      setNumber,
       totalSets,
     })
 
