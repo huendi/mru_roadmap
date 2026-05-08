@@ -6,7 +6,7 @@ import { adminDb } from '@/lib/firebase-admin'
 export async function POST(request: NextRequest) {
   try {
     // Verify admin authentication
-    const authResult = await adminAuth(request)
+    const authResult = await adminAuth()
     if (!authResult.success) {
       return NextResponse.json({ error: 'Admin access required' }, { status: 401 })
     }
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
           .doc('level5')
           .get()
 
-        const existingData = level5Doc.exists ? level5Doc.data() : {}
+        const existingData = level5Doc.exists ? level5Doc.data() ?? {} : {}
         const hasValidData = Object.keys(existingData).length > 0 && existingData.userId
 
         if (!hasValidData) {
@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
 // GET endpoint to check Level 5 data status
 export async function GET(request: NextRequest) {
   try {
-    const authResult = await adminAuth(request)
+    const authResult = await adminAuth()
     if (!authResult.success) {
       return NextResponse.json({ error: 'Admin access required' }, { status: 401 })
     }
