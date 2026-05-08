@@ -71,7 +71,8 @@ export async function GET(request: NextRequest) {
         console.log('🔍 Fallback query found users with receipts:', usersSnapshot.length)
       } catch (fallbackError) {
         console.error('🔍 Fallback query also failed:', fallbackError)
-        throw new Error('Failed to query users with receipts: ' + fallbackError.message)
+        const errorMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+        throw new Error('Failed to query users with receipts: ' + errorMessage)
       }
     }
 

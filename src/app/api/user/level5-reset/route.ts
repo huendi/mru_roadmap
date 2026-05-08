@@ -18,19 +18,8 @@ export async function POST(request: NextRequest) {
       .set({
         userId: authResult.user!.uid,
         currentStep: 1,
-        examType: undefined,
-        icMode: undefined,
-        iiapMode: undefined,
-        examModes: undefined,
-        selectedExams: undefined,
-        level4Category: undefined,
-        level4DeliveryModes: undefined,
-        scheduleId: undefined,
         receiptUploaded: false,
-        receiptUrl: undefined,
         adminApproved: false,
-        adminDecision: 'pending',
-        completedAt: undefined,
       })
 
     // Reset user's currentLevel back to 5 since they need to complete Level 5 again
