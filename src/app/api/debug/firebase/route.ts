@@ -8,7 +8,7 @@ export async function GET() {
     
     const results = {
       collections: [] as string[],
-      usersCollection: { exists: false, count: 0, sampleUserId: null },
+      usersCollection: { exists: false, count: 0, sampleUserId: null as string | null },
       settingsCollection: { exists: false, count: 0 },
       level4ExamConfig: { exists: false },
       sampleUserLevel4Exams: { exists: false, count: 0 }
@@ -73,7 +73,7 @@ export async function GET() {
     console.error('Firebase check error:', error)
     return NextResponse.json({ 
       success: false, 
-      error: error.message 
+      error: error instanceof Error ? error.message : String(error) 
     }, { status: 500 })
   }
 }
